@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+!.env.local.example
+.venv/
+__pycache__/
+.pytest_cache/
+.next/
+node_modules/
+*.pyc
+*.tsbuildinfo
+supabase/.branches/
+supabase/.profiles/
+supabase/.temp/
