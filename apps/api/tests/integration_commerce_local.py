@@ -77,14 +77,16 @@ async def main():
         order_path = f"{base}/orders/{order['id']}"
         await request(client, "POST", f"{order_path}/action", token, json={"action": "submit"})
         await request(client, "POST", f"{order_path}/action", token, json={"action": "confirm"})
-        assert (await request(client, "GET", f"{base}/products", token))[0]["product_variants"][0]["stock"] == 3
+        current = await request(client, "GET", f"{base}/products", token)
+        assert next(p for p in current if p["id"] == product["id"])["product_variants"][0]["stock"] == 3
         await request(client, "POST", f"{order_path}/payments", token,
                       json={"amount_minor": 500, "method": "cash"})
         await request(client, "POST", f"{order_path}/action", token,
                       json={"action": "cancel", "reason": "Customer request"})
         detail = await request(client, "GET", order_path, token)
         assert detail["state"] == "cancelled" and detail["refund_due_minor"] == 500
-        assert (await request(client, "GET", f"{base}/products", token))[0]["product_variants"][0]["stock"] == 5
+        current = await request(client, "GET", f"{base}/products", token)
+        assert next(p for p in current if p["id"] == product["id"])["product_variants"][0]["stock"] == 5
         await request(client, "POST", f"{base}/products/{product['id']}/remove", token)
         assert next(p for p in await request(client, "GET", f"{base}/products", token) if p["id"] == product["id"])["state"] == "archived"
         await request(client, "POST", f"{base}/products/{product['id']}/restore", token)

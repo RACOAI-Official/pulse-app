@@ -45,6 +45,7 @@ Meta webhook callback: `https://<api-host>/webhooks/meta`. Set the same verify t
 Run `PYTHONPATH=apps/api .venv/bin/pytest -q apps/api/tests`, `npm run typecheck`, and `npm run build` in `apps/web`. With local Supabase, Redis, and the Celery worker running, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_local.py` exercises Auth, RLS, webhook deduplication, worker processing, inbox reads, owner invites, WebSocket ticket creation, and failed outbound visibility. It creates uniquely named fixture users and tenants in the local database. Real Meta delivery still requires the sandbox credentials and staging hostnames.
 
 Phase 2's database flow can be checked against a local PostgreSQL server with `psql -X -v ON_ERROR_STOP=1 postgres -f apps/api/tests/commerce_postgres.sql`. This applies both migrations in a transaction, checks stock, payment, cancellation, tenant isolation, and product restoration, then rolls the transaction back.
+With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_commerce_local.py` exercises Auth, tenant isolation, catalog, CSV preview and import, order confirmation, stock reservation and restoration, payment history, and archive/restore through the HTTP API. It creates uniquely named local fixture users and tenants.
 
 ## Commerce workflow
 
