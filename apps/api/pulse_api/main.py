@@ -327,3 +327,8 @@ async def websocket_updates(websocket: WebSocket, ticket: str = Query(...)) -> N
             await pubsub.aclose()
     finally:
         await client.aclose()
+
+
+from .commerce import router as commerce_router  # noqa: E402
+
+app.include_router(commerce_router)
