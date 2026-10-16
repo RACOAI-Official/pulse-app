@@ -1,6 +1,6 @@
 # Pulse
 
-Pulse Phase 0+1 is a three-channel Meta sandbox integration and a shared human inbox. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md).
+Pulse Phase 0–2 combines a three-channel Meta sandbox inbox with a local commerce workspace. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md).
 
 ## Stack
 
@@ -14,7 +14,7 @@ Pulse Phase 0+1 is a three-channel Meta sandbox integration and a shared human i
 1. Run Docker Desktop, then `supabase start` from the repository root. The local Supabase CLI prints its API URL, anon key, and service role key.
 2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false` for the human inbox.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
-4. `supabase start` applies the versioned migration on a new local project. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit is available from the Supabase CLI stack.
+4. `supabase start` applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add Phase 2 without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit is available from the Supabase CLI stack.
 5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv .venv` and `.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
 6. Start Redis (for example, `docker run -d --name pulse-local-redis -p 6379:6379 redis:7.4-alpine`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
 
@@ -43,6 +43,14 @@ Meta webhook callback: `https://<api-host>/webhooks/meta`. Set the same verify t
 ## Verification
 
 Run `PYTHONPATH=apps/api .venv/bin/pytest -q apps/api/tests`, `npm run typecheck`, and `npm run build` in `apps/web`. With local Supabase, Redis, and the Celery worker running, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_local.py` exercises Auth, RLS, webhook deduplication, worker processing, inbox reads, owner invites, WebSocket ticket creation, and failed outbound visibility. It creates uniquely named fixture users and tenants in the local database. Real Meta delivery still requires the sandbox credentials and staging hostnames.
+
+Phase 2's database flow can be checked against a local PostgreSQL server with `psql -X -v ON_ERROR_STOP=1 postgres -f apps/api/tests/commerce_postgres.sql`. This applies both migrations in a transaction, checks stock, payment, cancellation, tenant isolation, and product restoration, then rolls the transaction back.
+
+## Commerce workflow
+
+Open **Catalog** to select the workspace currency before adding data. Owners can choose BDT, USD, EUR, or GBP; it locks when the first product or order exists. Owners and staff can add draft products, set variants and prices, attach a JPEG/PNG/WebP upload or public HTTPS image URL, then activate the product. Existing stock is adjusted with a reason, creating an audit movement. The CSV template has one row per variant; preview reports row errors, and import commits all products in one database transaction. Product handles and SKUs must be unique within the workspace.
+
+Open **Orders** to create a manual draft from active catalog variants. Submit it for confirmation, then confirm to recheck prices and stock and reserve units. Continue through processing and completion. Cancellation before completion restores reserved units once. Payments are manual records; cancelling a paid order keeps those records and shows the amount due for a refund. Pulse does not process the refund. Unreferenced products can be removed; products used by an order are archived and may be restored as drafts. See [Phase 2 design](docs/plans/2026-10-16-phase-2-commerce-design.md) for the approved boundary and reference evidence.
 
 ## Operational behavior
 

@@ -40,6 +40,7 @@ create table public.product_variants (
   foreign key (product_id, tenant_id) references public.products(id, tenant_id) on delete cascade
 );
 create index product_variants_product_idx on public.product_variants (product_id, active);
+create unique index product_variants_sku_ci_idx on public.product_variants (tenant_id, lower(sku));
 
 create table public.stock_movements (
   id uuid primary key default gen_random_uuid(),
