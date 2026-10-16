@@ -11,10 +11,10 @@ Pulse Phase 0–2 combines a three-channel Meta sandbox inbox with a local comme
 
 ## Local setup
 
-1. Run Docker Desktop, then `supabase start` from the repository root. The local Supabase CLI prints its API URL, anon key, and service role key.
+1. Run Docker Desktop, then start the minimal local Supabase stack from the repository root: `supabase start --exclude realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor`. Pulse uses Postgres, Auth, PostgREST, Storage, and Kong locally. The CLI prints the API URL and keys. To use local email capture or Studio, start the optional services separately by removing their names from the exclude list.
 2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false` for the human inbox.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
-4. `supabase start` applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add Phase 2 without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit is available from the Supabase CLI stack.
+4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add Phase 2 without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
 5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv .venv` and `.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
 6. Start Redis (for example, `docker run -d --name pulse-local-redis -p 6379:6379 redis:7.4-alpine`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
 
