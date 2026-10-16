@@ -9,6 +9,7 @@ __pycache__/
 node_modules/
 *.pyc
 *.tsbuildinfo
+.DS_Store
 supabase/.branches/
 supabase/.profiles/
 supabase/.temp/
