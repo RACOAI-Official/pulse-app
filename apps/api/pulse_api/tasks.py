@@ -10,7 +10,7 @@ from cryptography.fernet import Fernet
 from .media import save_media
 from .meta import send_text
 from .settings import get_settings
-from .store import eq, service_request
+from .store import eq, service_headers, service_request
 
 logger = logging.getLogger(__name__)
 celery_app = Celery("pulse", broker=get_settings().redis_url)
@@ -171,8 +171,7 @@ def purge_retention() -> None:
             with httpx.Client(timeout=20) as client:
                 response = client.request(
                     "DELETE", f"{settings.supabase_url}/storage/v1/object/inbox-media",
-                    headers={"apikey": settings.supabase_service_role_key,
-                             "Authorization": f"Bearer {settings.supabase_service_role_key}"},
+                    headers=service_headers(),
                     json={"prefixes": paths},
                 )
             response.raise_for_status()

@@ -4,7 +4,7 @@ from uuid import uuid4
 import httpx
 
 from .settings import get_settings
-from .store import storage_path
+from .store import service_headers, storage_path
 
 ALLOWED_HOST_SUFFIXES = (
     "facebook.com", "fbcdn.net", "instagram.com", "cdninstagram.com",
@@ -53,9 +53,7 @@ def save_media(tenant_id: str, items: list[dict], token: str) -> list[dict]:
             with httpx.Client(timeout=20) as client:
                 upload = client.post(
                     f"{settings.supabase_url}/storage/v1/object/inbox-media/{storage_path(object_path)}",
-                    headers={"apikey": settings.supabase_service_role_key,
-                             "Authorization": f"Bearer {settings.supabase_service_role_key}",
-                             "Content-Type": mime_type},
+                    headers=service_headers(mime_type),
                     content=response.content,
                 )
             upload.raise_for_status()

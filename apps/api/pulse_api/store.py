@@ -15,14 +15,22 @@ class StoreError(Exception):
 
 def _headers(token: str, prefer: str | None = None) -> dict[str, str]:
     settings = get_settings()
+    service = token == settings.supabase_service_role_key
     headers = {
-        "apikey": settings.supabase_service_role_key
-        if token == settings.supabase_service_role_key else settings.supabase_anon_key,
-        "Authorization": f"Bearer {token}",
+        "apikey": settings.supabase_service_role_key if service else settings.supabase_anon_key,
         "Content-Type": "application/json",
     }
+    # Opaque secret keys authenticate in apikey only; user sessions remain JWTs.
+    if not (service and token.startswith("sb_secret_")):
+        headers["Authorization"] = f"Bearer {token}"
     if prefer:
         headers["Prefer"] = prefer
+    return headers
+
+
+def service_headers(content_type: str = "application/json") -> dict[str, str]:
+    headers = _headers(get_settings().supabase_service_role_key)
+    headers["Content-Type"] = content_type
     return headers
 
 

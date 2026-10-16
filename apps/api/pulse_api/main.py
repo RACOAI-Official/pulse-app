@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from .meta import extract_messages, verify_signature
 from .settings import get_settings
-from .store import StoreError, auth_user, eq, service_auth_request, service_request, storage_path, user_request
+from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
 from .tasks import process_webhook, send_outbound
 
 logger = logging.getLogger(__name__)
@@ -232,8 +232,7 @@ async def media_url(tenant_id: UUID, message_id: UUID, media_index: int, auth: S
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             f"{settings.supabase_url}/storage/v1/object/sign/inbox-media/{storage_path(path)}",
-            headers={"apikey": settings.supabase_service_role_key,
-                     "Authorization": f"Bearer {settings.supabase_service_role_key}"},
+            headers=service_headers(),
             json={"expiresIn": 60},
         )
     if response.status_code != 200:

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .main import Session, membership
 from .settings import get_settings
-from .store import eq, storage_path, user_request
+from .store import eq, service_headers, storage_path, user_request
 
 router = APIRouter(prefix="/tenants/{tenant_id}/commerce", tags=["commerce"])
 
@@ -377,9 +377,7 @@ async def upload_media(tenant_id: UUID, request: Request, auth: Session):
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             f"{settings.supabase_url}/storage/v1/object/catalog-media/{storage_path(path)}",
-            headers={"apikey": settings.supabase_service_role_key,
-                     "Authorization": f"Bearer {settings.supabase_service_role_key}",
-                     "Content-Type": mime}, content=data,
+            headers=service_headers(mime), content=data,
         )
     if response.status_code >= 400:
         raise HTTPException(502, "Image upload failed")
@@ -395,8 +393,7 @@ async def sign_media(tenant_id: UUID, auth: Session, path: str):
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             f"{settings.supabase_url}/storage/v1/object/sign/catalog-media/{storage_path(path)}",
-            headers={"apikey": settings.supabase_service_role_key,
-                     "Authorization": f"Bearer {settings.supabase_service_role_key}"},
+            headers=service_headers(),
             json={"expiresIn": 300},
         )
     if response.status_code != 200:
