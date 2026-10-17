@@ -49,6 +49,8 @@ With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/
 
 Phase 3's database checks are `apps/api/tests/agent_postgres.sql` and `apps/api/tests/agent_rls_postgres.sql`; both wrap synthetic records in a transaction and roll back. The first checks fragment coalescing, idempotent replies, media handoff, and human takeover. The second checks tenant isolation, test-before-publish, immutable versions, and enabling live AI. The configured `qwen3` endpoint was checked with a short non-sensitive prompt. A real Meta round trip remains a separate sandbox acceptance check.
 
+With local Supabase and the configured model endpoint available, `PYTHONPATH=apps/api apps/api/.venv/bin/python apps/api/tests/integration_agent_local.py` exercises Auth, draft save, private model preview, publish gating, live enablement, fragment coalescing, and a queued AI reply through the HTTP API and database. It creates a uniquely named local fixture account and tenant; it does not send to Meta.
+
 ## Agent workflow
 
 In **Agent Studio**, an owner enters business identity and voice, policies, FAQs, and the attachment handoff reply. Save a draft, test it privately in the phone panel, then publish. A saved edit invalidates the previous test until the new draft is tested. Publishing stores an immutable version; live AI stays off until the owner enables it. If live AI is already on, publishing the tested draft updates live replies immediately after the confirmation in the dashboard.

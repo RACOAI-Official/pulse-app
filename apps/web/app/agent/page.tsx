@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "lucide-react";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
@@ -25,6 +25,8 @@ function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "s
   const [prompt, setPrompt] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const publishDialog = useRef<HTMLDialogElement>(null);
   const [loading, setLoading] = useState(true);
   const base = `/tenants/${tenantId}/agent`;
   const dirty = useMemo(() => draft ? JSON.stringify(draft) !== saved : false, [draft, saved]);
@@ -38,6 +40,13 @@ function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "s
     }).catch(error => { if (active) { setNotice(error instanceof Error ? error.message : "Could not load agent"); setLoading(false); } });
     return () => { active = false; };
   }, [base]);
+
+  useEffect(() => {
+    const dialog = publishDialog.current;
+    if (!dialog) return;
+    if (confirmPublish && !dialog.open) dialog.showModal();
+    if (!confirmPublish && dialog.open) dialog.close();
+  }, [confirmPublish]);
 
   async function act(work: () => Promise<void>) {
     setBusy(true); setNotice("");
@@ -81,13 +90,12 @@ function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "s
   }
 
   async function publish() {
-    if (!canPublish || !window.confirm(config?.enabled
-      ? "Publish this tested draft to live customer conversations?"
-      : "Publish this tested draft? You can enable live replies afterward.")) return;
+    if (!canPublish) return;
     await act(async () => {
       const result = await api<{ published_version: number; enabled: boolean }>(`${base}/publish`, { method: "POST" });
       setConfig(current => current ? { ...current, published_version: result.published_version,
         published: current.draft, enabled: result.enabled } : current);
+      setConfirmPublish(false);
       setNotice(`Version ${result.published_version} published.`);
     });
   }
@@ -124,7 +132,8 @@ function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "s
         {role === "owner" && <button className="button subtle" disabled={draft.faqs.length >= 100} onClick={() => edit("faqs", [...draft.faqs, { question: "", answer: "" }])}><Plus size={14} /> Add FAQ</button>}
       </section>
       <section className="agent-card"><div className="agent-card-head"><Bot size={19} /><div><span className="eyebrow">04 / HANDOFF</span><h2>When a human is needed</h2></div></div><label className="agent-single">Reply for photos, voice notes, or unavailable AI<textarea disabled={role !== "owner"} maxLength={500} value={draft.media_reply} onChange={e => edit("media_reply", e.target.value)} /></label></section>
-      {role === "owner" && <div className="agent-publish"><button className="button primary" disabled={busy || !dirty} onClick={save}><Check size={16} /> Save draft</button><span>{dirty ? "Unsaved changes" : config.tested_revision === config.draft_revision && config.draft_revision > 0 ? "Draft tested" : "Test the saved draft"}</span><button className="button" disabled={busy || !canPublish} onClick={publish}>Publish version</button><button className="button subtle" disabled={busy || !config.published} onClick={toggleLive}>{config.enabled ? <><CirclePause size={16} /> Pause AI</> : <><CirclePlay size={16} /> Enable AI</>}</button></div>}
+      {role === "owner" && <div className="agent-publish"><button className="button primary" disabled={busy || !dirty} onClick={save}><Check size={16} /> Save draft</button><span>{dirty ? "Unsaved changes" : config.tested_revision === config.draft_revision && config.draft_revision > 0 ? "Draft tested" : "Test the saved draft"}</span><button className="button" disabled={busy || !canPublish} onClick={() => setConfirmPublish(true)}>Publish version</button><button className="button subtle" disabled={busy || !config.published} onClick={toggleLive}>{config.enabled ? <><CirclePause size={16} /> Pause AI</> : <><CirclePlay size={16} /> Enable AI</>}</button></div>}
+      <dialog ref={publishDialog} className="agent-confirm" aria-labelledby="publish-title" onCancel={() => setConfirmPublish(false)}><span className="eyebrow">PUBLISH AGENT</span><h2 id="publish-title">Publish this tested draft?</h2><p>{config.enabled ? "This version will answer live customer conversations immediately." : "This version will be available for customer conversations once you enable AI."}</p><div className="agent-confirm-actions"><button type="button" className="button subtle" disabled={busy} onClick={() => setConfirmPublish(false)}>Cancel</button><button type="button" className="button primary" disabled={busy} onClick={publish}>{busy ? "Publishing…" : "Confirm publish"}</button></div></dialog>
     </div><aside className="agent-preview"><div className="preview-head"><FlaskConical size={18} /><div><strong>Private test phone</strong><span>Draft · never sends to Meta</span></div><button className="text-button" onClick={() => setTurns([])}>Clear</button></div><div className="preview-thread">{turns.length ? turns.map((turn, index) => <div key={index} className={`preview-bubble ${turn.role}`}>{turn.content}</div>) : <div className="preview-empty"><Bot size={32} /><strong>Start as a customer.</strong><p>Ask about products, delivery, or a tricky situation. Test in Bangla, Banglish, and English.</p></div>}</div><form onSubmit={test} className="preview-composer"><textarea aria-label="Test message" value={prompt} maxLength={1000} onChange={e => setPrompt(e.target.value)} placeholder={dirty ? "Save your draft to test it" : "Ask your assistant…"} disabled={busy || dirty || !draft.business_name.trim()} /><button className="button primary" disabled={busy || dirty || !prompt.trim() || !draft.business_name.trim()}><Send size={16} /> {busy ? "Thinking…" : "Test reply"}</button></form><p className="preview-foot">AI can make mistakes. Check facts and tone before publishing.</p></aside></div>
   </main>;
 }
