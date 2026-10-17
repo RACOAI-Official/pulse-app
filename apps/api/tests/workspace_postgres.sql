@@ -8,6 +8,9 @@ insert into public.tenants(id,name) values
   (:'own_tenant','Workspace test tenant'),(:'other_tenant','Isolated tenant');
 insert into public.memberships(tenant_id,user_id,role)
   values(:'own_tenant',:'test_user','owner');
+insert into public.agent_configs(tenant_id,draft,published,draft_revision,tested_revision,published_version)
+  values(:'own_tenant','{"business_name":"Test business"}'::jsonb,
+    '{"business_name":"Test business"}'::jsonb,1,1,1);
 insert into public.channel_connections(tenant_id,channel,external_account_id,display_name,credential_ciphertext)
   values(:'own_tenant','messenger','workspace-test-'||:'own_tenant','Test Page','test-only');
 insert into public.products(tenant_id,handle,title,state)
@@ -37,6 +40,18 @@ declare v_tenant uuid := current_setting('app.test_own_tenant')::uuid;
   v_conversation uuid; v_profile uuid; v_ticket uuid; v_comment uuid;
   v_proposal public.admin_proposals; v_report jsonb;
 begin
+  perform public.pulse_set_agent_enabled(v_tenant,true);
+  if not (select enabled from public.agent_configs where tenant_id=v_tenant) then
+    raise exception 'Agent enable failed';
+  end if;
+  perform public.pulse_set_agent_enabled(v_tenant,false);
+  if (select enabled from public.agent_configs where tenant_id=v_tenant) then
+    raise exception 'Agent disable failed';
+  end if;
+  if not exists(select 1 from public.activity_events where tenant_id=v_tenant
+      and subject_type='agent_configs' and subject_id=v_tenant) then
+    raise exception 'Agent activity missing';
+  end if;
   select id,customer_id into v_conversation,v_profile from public.conversations
     where tenant_id=v_tenant limit 1;
   if v_profile is null then raise exception 'Conversation did not create CRM profile'; end if;

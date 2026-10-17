@@ -13,6 +13,7 @@ Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, ver
 
 1. Run Docker Desktop, then start the minimal local Supabase stack from the repository root: `supabase start --exclude realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor`. Pulse uses Postgres, Auth, PostgREST, Storage, and Kong locally. The CLI prints the API URL and keys. To use local email capture or Studio, start the optional services separately by removing their names from the exclude list.
 2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api apps/api/.venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false`. Set `PULSE_LLM_CHAT_URL` to the full `/v1/chat/completions` URL, `PULSE_LLM_MODEL` to its served model name, and `PULSE_LLM_API_KEY` if the server requires a bearer token. For Qwen3 servers that support `chat_template_kwargs`, set `PULSE_LLM_DISABLE_THINKING=true` to get reply text within the configured token cap.
+   Restart the API and Celery worker after changing `.env`; both cache settings at process startup. A webhook challenge can pass while message POSTs fail signature verification if the App Secret changed after startup.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
 4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add pending phases without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
 5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv apps/api/.venv` and `apps/api/.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
@@ -20,11 +21,12 @@ Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, ver
 
    ```sh
    PYTHONPATH=apps/api apps/api/.venv/bin/uvicorn pulse_api.main:app --reload --port 8000
-   PYTHONPATH=apps/api apps/api/.venv/bin/celery -A pulse_api.tasks.celery_app worker --loglevel=info
+   PYTHONPATH=apps/api apps/api/.venv/bin/celery -A pulse_api.tasks.celery_app worker --pool=solo --concurrency=1 --loglevel=info
    PYTHONPATH=apps/api apps/api/.venv/bin/celery -A pulse_api.tasks.celery_app beat --loglevel=info
    ```
 
    Run `npm run dev` in `apps/web` and open `http://localhost:3000`.
+   The solo worker setting is for local macOS development; it avoids the prefork task failure observed with the local Python/Celery combination. Staging uses the worker configuration in Docker Compose.
 
 7. Create the first tenant and invite its owner:
 
