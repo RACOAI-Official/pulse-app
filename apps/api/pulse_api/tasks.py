@@ -46,6 +46,14 @@ def _publish(tenant_id: str) -> None:
         logger.warning("Live update publish failed for tenant %s", tenant_id)
 
 
+def _dispatch_outbound(message_id: str) -> None:
+    try:
+        send_outbound.delay(message_id)
+    except Exception:
+        # The queued message is durable and the regular reconciler will retry dispatch.
+        logger.exception("Outbound dispatch failed for message %s", message_id)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -119,7 +127,7 @@ def process_agent_job(job_id: str) -> None:
             "p_job_id": job_id, "p_body": reply, "p_handoff": handoff,
         })
         if reply_id:
-            send_outbound.delay(reply_id)
+            _dispatch_outbound(reply_id)
             _publish(job["tenant_id"])
     except Exception as exc:
         logger.exception("Agent job failed: %s", job_id)
@@ -130,7 +138,7 @@ def process_agent_job(job_id: str) -> None:
                 "p_job_id": job_id, "p_body": fallback, "p_handoff": True,
             })
             if reply_id:
-                send_outbound.delay(reply_id)
+                _dispatch_outbound(reply_id)
                 _publish(job["tenant_id"])
         except Exception:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
