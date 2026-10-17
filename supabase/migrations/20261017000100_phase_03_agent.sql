@@ -10,6 +10,8 @@ create table public.agent_configs (
     check (jsonb_typeof(draft) = 'object'),
   published jsonb check (published is null or jsonb_typeof(published) = 'object'),
   published_version integer not null default 0 check (published_version >= 0),
+  draft_revision integer not null default 0 check (draft_revision >= 0),
+  tested_revision integer not null default 0 check (tested_revision >= 0),
   enabled boolean not null default false,
   updated_at timestamptz not null default now(),
   published_at timestamptz,
@@ -17,13 +19,40 @@ create table public.agent_configs (
 );
 create policy agent_configs_read on public.agent_configs for select to authenticated
   using (public.pulse_is_member(tenant_id));
-create policy agent_configs_insert on public.agent_configs for insert to authenticated
-  with check (public.pulse_is_owner(tenant_id));
-create policy agent_configs_update on public.agent_configs for update to authenticated
-  using (public.pulse_is_owner(tenant_id)) with check (public.pulse_is_owner(tenant_id));
 alter table public.agent_configs enable row level security;
 revoke all on public.agent_configs from anon, authenticated;
-grant select, insert (tenant_id, draft), update (draft) on public.agent_configs to authenticated;
+grant select on public.agent_configs to authenticated;
+
+create function public.pulse_save_agent_draft(p_tenant_id uuid, p_draft jsonb)
+returns integer language plpgsql security definer set search_path = '' as $$
+declare v_revision integer;
+begin
+  if not public.pulse_is_owner(p_tenant_id) then
+    raise exception 'Owner role required' using errcode = '42501';
+  end if;
+  if jsonb_typeof(p_draft) <> 'object' then
+    raise exception 'Invalid agent draft' using errcode = '22023';
+  end if;
+  insert into public.agent_configs (tenant_id,draft,draft_revision)
+  values (p_tenant_id,p_draft,1)
+  on conflict (tenant_id) do update set draft=excluded.draft,
+    draft_revision=public.agent_configs.draft_revision+1, updated_at=now()
+  returning draft_revision into v_revision;
+  return v_revision;
+end;
+$$;
+
+create function public.pulse_mark_agent_tested(p_tenant_id uuid, p_revision integer)
+returns boolean language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.pulse_is_member(p_tenant_id) then
+    raise exception 'Tenant not found' using errcode = '42501';
+  end if;
+  update public.agent_configs set tested_revision=p_revision
+  where tenant_id=p_tenant_id and draft_revision=p_revision;
+  return found;
+end;
+$$;
 
 create function public.pulse_publish_agent(p_tenant_id uuid)
 returns integer language plpgsql security definer set search_path = '' as $$
@@ -34,9 +63,11 @@ begin
   end if;
   update public.agent_configs set published = draft,
     published_version = published_version + 1, published_at = now(), updated_at = now()
-  where tenant_id = p_tenant_id and length(trim(coalesce(draft->>'business_name',''))) > 0
+  where tenant_id = p_tenant_id and draft_revision > 0
+    and tested_revision = draft_revision
+    and length(trim(coalesce(draft->>'business_name',''))) > 0
   returning published_version into v_version;
-  if v_version is null then raise exception 'Add a business name before publishing' using errcode = '22023'; end if;
+  if v_version is null then raise exception 'Save and test this draft before publishing' using errcode = '22023'; end if;
   return v_version;
 end;
 $$;
@@ -78,6 +109,7 @@ create table public.agent_test_runs (
   user_id uuid not null references auth.users(id),
   prompt text not null check (length(prompt) between 1 and 1000),
   response text not null,
+  draft_revision integer not null,
   created_at timestamptz not null default now()
 );
 create index agent_test_runs_tenant_idx on public.agent_test_runs (tenant_id, user_id, created_at desc);
@@ -203,10 +235,14 @@ begin
 end;
 $$;
 
-revoke all on function public.pulse_publish_agent(uuid), public.pulse_set_agent_enabled(uuid,boolean),
+revoke all on function public.pulse_save_agent_draft(uuid,jsonb),
+  public.pulse_mark_agent_tested(uuid,integer),
+  public.pulse_publish_agent(uuid), public.pulse_set_agent_enabled(uuid,boolean),
   public.pulse_set_responder(uuid,text), public.pulse_claim_agent_job(uuid),
   public.pulse_complete_agent_job(uuid,text,boolean) from public,anon,authenticated;
-grant execute on function public.pulse_publish_agent(uuid), public.pulse_set_agent_enabled(uuid,boolean),
+grant execute on function public.pulse_save_agent_draft(uuid,jsonb),
+  public.pulse_mark_agent_tested(uuid,integer),
+  public.pulse_publish_agent(uuid), public.pulse_set_agent_enabled(uuid,boolean),
   public.pulse_set_responder(uuid,text) to authenticated;
 grant execute on function public.pulse_claim_agent_job(uuid),
   public.pulse_complete_agent_job(uuid,text,boolean) to service_role;
