@@ -3,6 +3,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight, Check, CheckCheck, CircleAlert, Image as ImageIcon, LoaderCircle, MessageSquare, RefreshCw, Search, Send, SlidersHorizontal } from "lucide-react";
 import WorkspaceShell from "@/components/WorkspaceShell";
+import Link from "next/link";
+import { CommentsInbox, OrdersInbox, TicketsInbox, UnrepliedInbox } from "@/components/InboxExtraViews";
 import { api, Conversation, InboxMedia, Message, websocketBase } from "@/lib/api";
 
 const channels = ["all", "messenger", "instagram", "whatsapp"] as const;
@@ -36,7 +38,7 @@ function MediaView({ tenantId, messageId, index, item }: { tenantId: string; mes
   </div>;
 }
 
-function InboxContent({ tenantId }: { tenantId: string }) {
+function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string }) {
   const [channel, setChannel] = useState<(typeof channels)[number]>("all");
   const [state, setState] = useState<"all" | "open" | "resolved">("all");
   const [query, setQuery] = useState("");
@@ -50,6 +52,7 @@ function InboxContent({ tenantId }: { tenantId: string }) {
   const conversationRequest = useRef(0);
   const messageRequest = useRef(0);
   const selected = useMemo(() => conversations.find(item => item.id === selectedId), [conversations, selectedId]);
+  useEffect(() => { if (focusId) setSelectedId(focusId); }, [focusId]);
 
   const loadConversations = useCallback(async () => {
     const request = ++conversationRequest.current;
@@ -156,6 +159,16 @@ function InboxContent({ tenantId }: { tenantId: string }) {
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Retry failed"); }
   }
 
+  async function createTicket() {
+    if (!selected) return;
+    const subject = window.prompt("Ticket subject", `Follow up with ${selected.customer_name || "customer"}`);
+    if (!subject?.trim()) return;
+    try {
+      await api(`/tenants/${tenantId}/tickets`, { method: "POST", body: JSON.stringify({ conversation_id: selected.id, subject: subject.trim() }) });
+      setError("Ticket created for this conversation.");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create ticket"); }
+  }
+
   return <div className="inbox-layout">
     <section className="conversation-panel">
       <div className="conversation-heading"><div><span className="eyebrow">SHARED WORKSPACE</span><h1>Conversations <span className="count-pill">{conversations.length}</span></h1></div><button className="icon-button" title="Refresh" onClick={loadConversations}><RefreshCw size={18} /></button></div>
@@ -171,7 +184,7 @@ function InboxContent({ tenantId }: { tenantId: string }) {
       <div className="panel-foot"><span className="live-dot" /> Live inbox <span>·</span> Human replies</div>
     </section>
     <section className="thread-panel">{selected ? <>
-      <header className="thread-header"><div className="thread-identity"><span className={`channel-avatar ${selected.channel}`}>{selected.channel === "whatsapp" ? "W" : selected.channel === "instagram" ? "I" : "M"}</span><div><strong>{selected.customer_name || selected.external_thread_id}</strong><span>{labels[selected.channel]} · {selected.responder === "human" ? "Human takeover" : "AI available"}</span></div></div><div className="thread-actions"><button className="button subtle" onClick={toggleResponder}>{selected.responder === "ai" ? "Take over" : "Return to AI"}</button><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></div></header>
+      <header className="thread-header"><div className="thread-identity"><span className={`channel-avatar ${selected.channel}`}>{selected.channel === "whatsapp" ? "W" : selected.channel === "instagram" ? "I" : "M"}</span><div><strong>{selected.customer_name || selected.external_thread_id}</strong><span>{labels[selected.channel]} · {selected.responder === "human" ? "Human takeover" : "AI available"}</span></div></div><div className="thread-actions"><Link className="button subtle" href={`/orders?conversation_id=${selected.id}`}>Create order</Link><button className="button subtle" onClick={createTicket}>Create ticket</button><button className="button subtle" onClick={toggleResponder}>{selected.responder === "ai" ? "Take over" : "Return to AI"}</button><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></div></header>
       <div className="thread-timeline"><div className="thread-start"><span>CONVERSATION STARTED</span><i /></div>{messages.map(message => <article key={message.id} className={`bubble-row ${message.direction === "outbound" ? "outbound" : "inbound"}`}><div className="message-bubble">
         {message.body && <p>{message.body}</p>}
         {message.media.map((item, index) => <MediaView key={index} tenantId={tenantId} messageId={message.id} index={index} item={item} />)}
@@ -183,6 +196,15 @@ function InboxContent({ tenantId }: { tenantId: string }) {
   </div>;
 }
 
+function InboxWorkspace({ tenantId }: { tenantId: string }) {
+  const [tab, setTab] = useState<"messages" | "orders" | "unreplied" | "tickets" | "comments">("messages");
+  const [focusId, setFocusId] = useState("");
+  function openConversation(id: string) { setFocusId(id); setTab("messages"); }
+  return <div className="inbox-page"><div className="inbox-primary-tabs" role="tablist" aria-label="Inbox sections">{(["messages", "orders", "unreplied", "tickets", "comments"] as const).map(item => <button key={item} role="tab" aria-selected={tab === item} className={tab === item ? "selected" : ""} onClick={() => setTab(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}</div>
+    {tab === "messages" ? <InboxContent key={tenantId + focusId} tenantId={tenantId} focusId={focusId} /> : tab === "orders" ? <OrdersInbox tenantId={tenantId} /> : tab === "unreplied" ? <UnrepliedInbox tenantId={tenantId} openConversation={openConversation} /> : tab === "tickets" ? <TicketsInbox tenantId={tenantId} openConversation={openConversation} /> : <CommentsInbox tenantId={tenantId} />}
+  </div>;
+}
+
 export default function InboxPage() {
-  return <WorkspaceShell>{workspace => <InboxContent key={workspace.tenantId} tenantId={workspace.tenantId} />}</WorkspaceShell>;
+  return <WorkspaceShell>{workspace => <InboxWorkspace key={workspace.tenantId} tenantId={workspace.tenantId} />}</WorkspaceShell>;
 }

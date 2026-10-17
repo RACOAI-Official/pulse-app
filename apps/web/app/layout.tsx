@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Pulse — Shared inbox",
-  description: "One place to answer every customer conversation.",
+  title: "Pulse — Business workspace",
+  description: "Manage customer conversations, commerce, and business insights in one workspace.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

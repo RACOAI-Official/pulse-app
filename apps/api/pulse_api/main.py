@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Web
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .meta import extract_messages, verify_signature
+from .meta import extract_comments, extract_messages, verify_signature
 from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, generate_reply
 from .settings import get_settings
 from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
@@ -48,6 +48,11 @@ async def session(authorization: Annotated[str | None, Header()] = None) -> tupl
 
 
 Session = Annotated[tuple[str, dict], Depends(session)]
+
+
+@app.get("/ops/overview")
+async def ops_overview(auth: Session) -> dict:
+    return await user_request("POST", "rpc/pulse_ops_overview", auth[0], body={})
 
 
 def dispatch(task, item_id: str) -> None:
@@ -191,6 +196,32 @@ async def channels(tenant_id: UUID, auth: Session) -> list[dict]:
     return rows
 
 
+@app.get("/tenants/{tenant_id}/onboarding")
+async def onboarding(tenant_id: UUID, auth: Session) -> dict:
+    await membership(tenant_id, auth[0])
+    agent_rows, product_rows, channel_rows, message_rows = await asyncio.gather(
+        user_request("GET", "agent_configs", auth[0], params={
+            "tenant_id": eq(str(tenant_id)), "select": "draft,published,enabled", "limit": "1",
+        }),
+        user_request("GET", "products", auth[0], params={
+            "tenant_id": eq(str(tenant_id)), "state": "eq.active", "select": "id", "limit": "1",
+        }),
+        channels(tenant_id, auth),
+        user_request("GET", "messages", auth[0], params={
+            "tenant_id": eq(str(tenant_id)), "direction": "eq.inbound", "select": "id", "limit": "1",
+        }),
+    )
+    agent = agent_rows[0] if agent_rows else {}
+    return {
+        "business_details": bool((agent.get("draft") or {}).get("business_name")),
+        "product_active": bool(product_rows),
+        "agent_published": bool(agent.get("published")),
+        "channel_configured": any(row["status"] == "connected" for row in channel_rows),
+        "inbound_verified": bool(message_rows),
+        "ai_enabled": bool(agent.get("enabled")),
+    }
+
+
 @app.get("/tenants/{tenant_id}/operations")
 async def operations(tenant_id: UUID, auth: Session) -> dict:
     await membership(tenant_id, auth[0])
@@ -204,6 +235,46 @@ async def operations(tenant_id: UUID, auth: Session) -> dict:
         "order": "created_at.desc", "limit": "20",
     })
     return {"failed_inbound": failed_events, "problem_sends": problem_sends}
+
+
+@app.get("/tenants/{tenant_id}/analytics")
+async def analytics(tenant_id: UUID, auth: Session,
+                    days: int = Query(7)) -> dict:
+    await membership(tenant_id, auth[0])
+    if days not in (7, 30, 90):
+        raise HTTPException(422, "Choose 7, 30, or 90 days")
+    return await user_request("POST", "rpc/pulse_analytics", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_days": days,
+    })
+
+
+@app.get("/tenants/{tenant_id}/performance")
+async def performance(tenant_id: UUID, auth: Session,
+                      days: int = Query(7)) -> list[dict]:
+    await membership(tenant_id, auth[0])
+    if days not in (7, 30, 90):
+        raise HTTPException(422, "Choose 7, 30, or 90 days")
+    return await user_request("POST", "rpc/pulse_team_performance", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_days": days,
+    })
+
+
+@app.get("/tenants/{tenant_id}/activity")
+async def activity(tenant_id: UUID, auth: Session) -> list[dict]:
+    await membership(tenant_id, auth[0])
+    return await user_request("GET", "activity_events", auth[0], params={
+        "tenant_id": eq(str(tenant_id)), "select": "*", "order": "created_at.desc", "limit": "200",
+    })
+
+
+@app.get("/tenants/{tenant_id}/usage")
+async def usage(tenant_id: UUID, auth: Session, days: int = Query(30)) -> dict:
+    await membership(tenant_id, auth[0])
+    if days not in (7, 30, 90):
+        raise HTTPException(422, "Choose 7, 30, or 90 days")
+    return await user_request("POST", "rpc/pulse_usage_summary", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_days": days,
+    })
 
 
 @app.get("/tenants/{tenant_id}/conversations")
@@ -376,7 +447,9 @@ async def receive_webhook(request: Request) -> dict:
     if len(raw) > 1024 * 1024:
         raise HTTPException(413, "Webhook too large")
     try:
-        incoming = extract_messages(json.loads(raw))
+        payload = json.loads(raw)
+        incoming = extract_messages(payload)
+        comments = extract_comments(payload)
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, "Invalid webhook JSON") from exc
     accepted = 0
@@ -399,6 +472,24 @@ async def receive_webhook(request: Request) -> dict:
         if events:
             accepted += 1
             dispatch(process_webhook, events[0]["id"])
+    for item in comments:
+        connections = await asyncio.to_thread(service_request, "GET", "channel_connections", params={
+            "channel": eq(item.channel), "external_account_id": eq(item.account_id),
+            "status": "eq.connected", "select": "id,tenant_id", "limit": "1",
+        })
+        if not connections:
+            continue
+        connection = connections[0]
+        rows = await asyncio.to_thread(service_request, "POST", "public_comments", params={
+            "on_conflict": "connection_id,provider_comment_id",
+        }, body={
+            "tenant_id": connection["tenant_id"], "connection_id": connection["id"],
+            "channel": item.channel, "post_id": item.post_id,
+            "provider_comment_id": item.provider_comment_id,
+            "parent_comment_id": item.parent_comment_id, "author_id": item.author_id,
+            "author_name": item.author_name, "body": item.body,
+        }, prefer="resolution=ignore-duplicates,return=representation")
+        accepted += len(rows or [])
     return {"accepted": accepted}
 
 
@@ -446,5 +537,9 @@ async def websocket_updates(websocket: WebSocket, ticket: str = Query(...)) -> N
 
 
 from .commerce import router as commerce_router  # noqa: E402
+from .inbox_extra import router as inbox_extra_router  # noqa: E402
+from .admin_agent import router as admin_agent_router  # noqa: E402
 
 app.include_router(commerce_router)
+app.include_router(inbox_extra_router)
+app.include_router(admin_agent_router)

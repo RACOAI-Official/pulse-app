@@ -5,9 +5,10 @@ import { Camera, Mail, MessageCircle, ShieldCheck, Users, Send, Activity } from 
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api, ChannelConnection } from "@/lib/api";
 
-function SettingsContent({ tenantId, role }: { tenantId: string; role: "owner" | "staff" }) {
+function SettingsContent({ tenantId, role }: { tenantId: string; role: "owner" | "manager" | "staff" }) {
   const [channels, setChannels] = useState<ChannelConnection[]>([]);
   const [operations, setOperations] = useState<{ failed_inbound: { id: string; channel: string; last_error: string | null }[]; problem_sends: { id: string; delivery_state: string }[] }>({ failed_inbound: [], problem_sends: [] });
+  const [usage, setUsage] = useState<Record<string, number>>({});
   const [email, setEmail] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,6 +18,7 @@ function SettingsContent({ tenantId, role }: { tenantId: string; role: "owner" |
       .catch(error => setNotice(error instanceof Error ? error.message : "Could not load channels"));
     api<typeof operations>(`/tenants/${tenantId}/operations`).then(setOperations)
       .catch(() => {});
+    api<Record<string, number>>(`/tenants/${tenantId}/usage`).then(setUsage).catch(() => {});
   }, [tenantId]);
 
   async function invite(event: FormEvent) {
@@ -49,6 +51,7 @@ function SettingsContent({ tenantId, role }: { tenantId: string; role: "owner" |
       {operations.failed_inbound.slice(0, 5).map(item => <p className="settings-note" key={item.id}>{item.channel}: {item.last_error || "Processing failed"}</p>)}
       <p className="settings-note">Uncertain replies should be checked in the Meta channel before another message is sent.</p>
     </section>
+    <section className="settings-section"><div className="settings-section-heading"><div><span className="eyebrow">04 / USAGE</span><h2>Last 30 days</h2></div><Activity size={20} /></div>{(["inbound_message", "ai_reply", "human_reply", "confirmed_order"] as const).map(kind => <div className="health-row" key={kind}><span>{kind.replaceAll("_", " ")}</span><strong>{usage[kind] || 0}</strong></div>)}<p className="settings-note">These are internal activity counts, not a bill. Model token and cost metering are not yet available.</p></section>
   </main>;
 }
 

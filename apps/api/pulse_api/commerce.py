@@ -90,6 +90,10 @@ class OrderInput(BaseModel):
     items: list[OrderLine] = Field(min_length=1, max_length=100)
 
 
+class ConversationLink(BaseModel):
+    conversation_id: UUID
+
+
 class ActionInput(BaseModel):
     action: str = Field(pattern="^(submit|edit|confirm|process|complete|cancel)$")
     reason: str | None = Field(default=None, max_length=240)
@@ -351,6 +355,17 @@ async def order_action(tenant_id: UUID, order_id: UUID, data: ActionInput, auth:
     return await user_request("POST", "rpc/pulse_order_action", auth[0], body={
         "p_order_id": str(order_id), "p_action": data.action, "p_reason": data.reason,
     })
+
+
+@router.post("/orders/{order_id}/conversation")
+async def attach_order_conversation(tenant_id: UUID, order_id: UUID,
+                                    data: ConversationLink, auth: Session):
+    await membership(tenant_id, auth[0])
+    linked = await user_request("POST", "rpc/pulse_attach_order_to_conversation", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_order_id": str(order_id),
+        "p_conversation_id": str(data.conversation_id),
+    })
+    return {"id": linked}
 
 
 @router.post("/orders/{order_id}/payments")

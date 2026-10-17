@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 
-from pulse_api.meta import extract_messages, verify_signature
+from pulse_api.meta import extract_comments, extract_messages, verify_signature
 
 
 def test_webhook_signature_rejects_tampering():
@@ -46,3 +46,25 @@ def test_extract_unsupported_whatsapp_media_to_human_inbox():
     result = extract_messages(payload)
     assert result[0].body is None
     assert result[0].media[0]["id"] == "media"
+
+
+def test_extract_page_and_instagram_public_comments_without_own_replies():
+    page = {"object": "page", "entry": [{"id": "page-1", "changes": [
+        {"field": "feed", "value": {"item": "comment", "verb": "add",
+         "comment_id": "c-1", "post_id": "p-1", "message": "Price?",
+         "from": {"id": "customer-1", "name": "Ada"}}},
+        {"field": "feed", "value": {"item": "comment", "verb": "add",
+         "comment_id": "c-own", "post_id": "p-1", "message": "Our reply",
+         "from": {"id": "page-1"}}},
+    ]}]}
+    instagram = {"object": "instagram", "entry": [{"id": "ig-1", "changes": [
+        {"field": "comments", "value": {"id": "ig-c-1", "media": {"id": "ig-p-1"},
+         "text": "Available?", "from": {"id": "ig-customer", "username": "buyer"}}},
+    ]}]}
+    fb_result = extract_comments(page)
+    ig_result = extract_comments(instagram)
+    assert len(fb_result) == len(ig_result) == 1
+    assert (fb_result[0].channel, fb_result[0].provider_comment_id,
+            fb_result[0].body) == ("messenger", "c-1", "Price?")
+    assert (ig_result[0].channel, ig_result[0].post_id,
+            ig_result[0].author_name) == ("instagram", "ig-p-1", "buyer")

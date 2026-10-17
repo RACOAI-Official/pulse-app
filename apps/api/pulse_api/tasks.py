@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 
 from .media import save_media
 from .agent import catalog_facts, config_for_tenant, generate_reply, recent_history
-from .meta import send_text
+from .meta import send_comment_reply, send_text
 from .settings import get_settings
 from .store import eq, service_headers, service_request
 
@@ -56,6 +56,23 @@ def _dispatch_outbound(message_id: str) -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _handoff_ticket(tenant_id: str, conversation_id: str) -> None:
+    existing = service_request("GET", "support_tickets", params={
+        "tenant_id": eq(tenant_id), "conversation_id": eq(conversation_id),
+        "status": "eq.active", "select": "id", "limit": "1",
+    })
+    if existing:
+        return
+    try:
+        service_request("POST", "support_tickets", body={
+            "tenant_id": tenant_id, "conversation_id": conversation_id,
+            "subject": "AI handoff requires attention", "source": "agent_handoff",
+        })
+    except Exception:
+        # A simultaneous handoff can win the unique active-ticket constraint.
+        logger.warning("Could not create handoff ticket for conversation %s", conversation_id)
 
 
 @celery_app.task(name="pulse.process_webhook")
@@ -129,6 +146,8 @@ def process_agent_job(job_id: str) -> None:
         if reply_id:
             _dispatch_outbound(reply_id)
             _publish(job["tenant_id"])
+        if handoff:
+            _handoff_ticket(job["tenant_id"], job["conversation_id"])
     except Exception as exc:
         logger.exception("Agent job failed: %s", job_id)
         try:
@@ -140,6 +159,7 @@ def process_agent_job(job_id: str) -> None:
             if reply_id:
                 _dispatch_outbound(reply_id)
                 _publish(job["tenant_id"])
+            _handoff_ticket(job["tenant_id"], job["conversation_id"])
         except Exception:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
                             body={"status": "failed", "last_error": type(exc).__name__})
@@ -191,6 +211,39 @@ def send_outbound(message_id: str) -> None:
         _publish(message["tenant_id"])
 
 
+@celery_app.task(name="pulse.send_public_comment_reply")
+def send_public_comment_reply(comment_id: str) -> None:
+    rows = service_request("PATCH", "public_comments", params={
+        "id": eq(comment_id), "reply_status": "eq.queued", "select": "*",
+    }, body={"reply_status": "sending"}, prefer="return=representation")
+    if not rows:
+        return
+    comment = rows[0]
+    try:
+        connection = _connection(comment["connection_id"])
+        if connection["status"] != "connected":
+            raise ValueError("Channel disconnected")
+        provider_id = send_comment_reply(comment["channel"], comment["provider_comment_id"],
+                                         _token(connection), comment["reply_body"])
+        service_request("PATCH", "public_comments", params={"id": eq(comment_id)}, body={
+            "reply_status": "sent", "reply_provider_id": provider_id, "failure_reason": None,
+        })
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        service_request("PATCH", "public_comments", params={"id": eq(comment_id)}, body={
+            "reply_status": "uncertain", "failure_reason": str(exc)[:500],
+        })
+    except httpx.HTTPStatusError as exc:
+        state = "uncertain" if exc.response.status_code >= 500 else "failed"
+        service_request("PATCH", "public_comments", params={"id": eq(comment_id)}, body={
+            "reply_status": state, "failure_reason": f"Meta HTTP {exc.response.status_code}",
+        })
+    except Exception as exc:
+        service_request("PATCH", "public_comments", params={"id": eq(comment_id)}, body={
+            "reply_status": "failed", "failure_reason": str(exc)[:500],
+        })
+    _publish(comment["tenant_id"])
+
+
 @celery_app.task(name="pulse.reconcile_agent")
 def reconcile_agent_jobs() -> None:
     stale_agent = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
@@ -222,6 +275,11 @@ def reconcile() -> None:
     })
     for item in messages:
         send_outbound.delay(item["id"])
+    comments = service_request("GET", "public_comments", params={
+        "reply_status": "eq.queued", "select": "id", "limit": "100",
+    })
+    for item in comments:
+        send_public_comment_reply.delay(item["id"])
     # A worker can die after Meta accepts a request. Never resend such messages blindly.
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
     service_request("PATCH", "messages", params={

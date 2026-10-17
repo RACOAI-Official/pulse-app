@@ -21,6 +21,8 @@ def main() -> None:
     connection.add_argument("--channel", choices=["messenger", "instagram", "whatsapp"], required=True)
     connection.add_argument("--account-id", required=True)
     connection.add_argument("--display-name", required=True)
+    platform = sub.add_parser("grant-operator")
+    platform.add_argument("--user-id", required=True)
     args = parser.parse_args()
 
     if args.command == "generate-key":
@@ -49,6 +51,12 @@ def main() -> None:
             "credential_ciphertext": encrypted, "status": "connected",
         }, prefer="return=representation")
         print(f"Connected {args.channel} as {rows[0]['id']}")
+    elif args.command == "grant-operator":
+        from uuid import UUID
+        user_id = str(UUID(args.user_id))
+        service_request("POST", "platform_operators", body={"user_id": user_id},
+                        prefer="resolution=ignore-duplicates")
+        print(f"Granted platform operator access to user {user_id}")
 
 
 if __name__ == "__main__":

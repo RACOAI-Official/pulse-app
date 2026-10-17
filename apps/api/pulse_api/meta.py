@@ -19,6 +19,18 @@ class Incoming:
     customer_name: str | None = None
 
 
+@dataclass(frozen=True)
+class IncomingComment:
+    channel: str
+    account_id: str
+    post_id: str
+    provider_comment_id: str
+    parent_comment_id: str | None
+    author_id: str
+    author_name: str
+    body: str
+
+
 def verify_signature(body: bytes, signature: str | None) -> bool:
     if not signature or not signature.startswith("sha256="):
         return False
@@ -72,6 +84,56 @@ def extract_messages(payload: dict[str, Any]) -> list[Incoming]:
                 ))
     return [m for m in messages if m.account_id and m.sender_id and m.provider_id
             and (m.body or m.media)]
+
+
+def extract_comments(payload: dict[str, Any]) -> list[IncomingComment]:
+    result: list[IncomingComment] = []
+    object_type = payload.get("object")
+    if object_type not in ("page", "instagram"):
+        return result
+    channel = "instagram" if object_type == "instagram" else "messenger"
+    for entry in payload.get("entry", []):
+        account_id = str(entry.get("id") or "")
+        for change in entry.get("changes", []):
+            value = change.get("value") or {}
+            if object_type == "page":
+                if change.get("field") != "feed" or value.get("item") != "comment" or value.get("verb") != "add":
+                    continue
+                comment_id = str(value.get("comment_id") or "")
+                post_id = str(value.get("post_id") or "")
+                parent_id = value.get("parent_id")
+                author = value.get("from") or {}
+                body = str(value.get("message") or "")
+            else:
+                if change.get("field") != "comments":
+                    continue
+                comment_id = str(value.get("id") or "")
+                post_id = str(value.get("media_id") or (value.get("media") or {}).get("id") or "")
+                parent_id = value.get("parent_id")
+                author = value.get("from") or {}
+                body = str(value.get("text") or "")
+            author_id = str(author.get("id") or "")
+            if account_id and post_id and comment_id and author_id != account_id:
+                result.append(IncomingComment(channel, account_id, post_id, comment_id,
+                                              str(parent_id) if parent_id else None,
+                                              author_id, str(author.get("name") or author.get("username") or ""),
+                                              body))
+    return result
+
+
+def send_comment_reply(channel: str, comment_id: str, token: str, body: str) -> str:
+    settings = get_settings()
+    host = "graph.instagram.com" if channel == "instagram" else "graph.facebook.com"
+    url = f"https://{host}/{settings.meta_graph_version}/{comment_id}/replies" if channel == "instagram" \
+        else f"https://{host}/{settings.meta_graph_version}/{comment_id}/comments"
+    with httpx.Client(timeout=15) as client:
+        response = client.post(url, headers={"Authorization": f"Bearer {token}"},
+                               data={"message": body})
+    response.raise_for_status()
+    reply_id = response.json().get("id")
+    if not reply_id:
+        raise ValueError("Meta returned no comment reply ID")
+    return str(reply_id)
 
 
 def send_text(channel: str, account_id: str, recipient_id: str,

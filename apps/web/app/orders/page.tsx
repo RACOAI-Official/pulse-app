@@ -23,6 +23,14 @@ function OrdersContent({ tenantId }: { tenantId: string }) {
   const [payment, setPayment] = useState({ amount: "", method: "cash", note: "" });
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [conversationId, setConversationId] = useState("");
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get("conversation_id");
+    if (value && /^[0-9a-f-]{36}$/i.test(value)) {
+      setConversationId(value);
+      setDraft(emptyDraft());
+    }
+  }, []);
   const refresh = useCallback(async () => {
     const [settings, catalog, rows] = await Promise.all([api<CommerceConfig>(`${base}/config`), api<Product[]>(`${base}/products`), api<CommerceOrder[]>(`${base}/orders`)]);
     setConfig(settings); setProducts(catalog); setOrders(rows);
@@ -56,6 +64,10 @@ function OrdersContent({ tenantId }: { tenantId: string }) {
         discount_value: draft.discount_type === "percent" ? Math.round(Number(draft.discount) * 100) : draft.discount_type === "amount" ? toMinor(draft.discount) : 0,
         delivery_minor: toMinor(draft.delivery), items: draft.items,
       }) });
+      setDraft(current => current ? { ...current, id: result.id } : current);
+      if (conversationId) {
+        await api(`${base}/orders/${result.id}/conversation`, { method: "POST", body: JSON.stringify({ conversation_id: conversationId }) });
+      }
       setSelectedId(result.id); setDraft(null); setNotice("Draft saved.");
     });
   }

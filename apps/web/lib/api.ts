@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 
 export interface TenantMembership {
   tenant_id: string;
-  role: "owner" | "staff";
+  role: "owner" | "manager" | "staff";
   tenants: { id: string; name: string };
 }
 
@@ -63,7 +63,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
-    try { message = (await response.json()).detail || message; } catch {}
+    try {
+      const detail = (await response.json()).detail;
+      if (typeof detail === "string") message = detail;
+      else if (Array.isArray(detail)) message = detail.map(item => item.msg || "Invalid input").join("; ");
+    } catch {}
     throw new Error(message);
   }
   return response.json() as Promise<T>;

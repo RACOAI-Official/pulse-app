@@ -1,6 +1,6 @@
 # Pulse
 
-Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md). The [implementation index](docs/implementation/README.md) maps the shipped phases and remaining work; the [Phase 3 record](docs/implementation/phase-3-agent.md) details the customer agent.
+Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, versioned customer agent, dashboard analytics, CRM, and a confirmation-based Admin Agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md). The [implementation index](docs/implementation/README.md) maps the implemented scope and remaining work.
 
 ## Stack
 
@@ -49,6 +49,8 @@ With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/
 
 Phase 3's database checks are `apps/api/tests/agent_postgres.sql` and `apps/api/tests/agent_rls_postgres.sql`; both wrap synthetic records in a transaction and roll back. The first checks fragment coalescing, idempotent replies, media handoff, and human takeover. The second checks tenant isolation, test-before-publish, immutable versions, and enabling live AI. The configured `qwen3` endpoint was checked with a short non-sensitive prompt. A real Meta round trip remains a separate sandbox acceptance check.
 
+The workspace checks are `docker exec -i supabase_db_pulse-local psql -U postgres -d postgres -X -v ON_ERROR_STOP=1 < apps/api/tests/workspace_postgres.sql` from the repository root. They roll back synthetic CRM, ticket, comment, Admin Agent, analytics, metering, and tenant-isolation records. The dashboard, all five inbox tabs, and Admin Agent were also inspected in a local signed-in browser session. These checks do not verify Meta delivery.
+
 With local Supabase and the configured model endpoint available, `PYTHONPATH=apps/api apps/api/.venv/bin/python apps/api/tests/integration_agent_local.py` exercises Auth, draft save, private model preview, publish gating, live enablement, fragment coalescing, and a queued AI reply through the HTTP API and database. It creates a uniquely named local fixture account and tenant; it does not send to Meta.
 
 ## Agent workflow
@@ -61,7 +63,9 @@ The model adapter uses no additional Docker image. The current supplied ngrok mo
 
 ## Sandbox readiness
 
-The remote Supabase project has the Phase 3 migrations, but no owner account, tenant, channel connection, or real Meta message yet. The supplied four-character owner password was rejected by Supabase Auth; a valid password is needed to finish owner setup. A real sandbox round trip also needs the Meta app secret, webhook verify token and Graph API version, and each test Page/Instagram/WhatsApp asset ID plus its access token. The API needs an HTTPS callback URL reachable by Meta; a temporary tunnel is possible for local testing. The model endpoint is configured locally. These are distinct credentials and assets; a Meta app key and secret alone do not identify the channels or provide a public callback.
+The new workspace migrations have been applied locally, not to the remote Supabase project. The remote project has no verified owner, tenant, channel connection, or real Meta message. A valid owner login, Meta app secret, webhook verify token and Graph API version, each test Page/Instagram/WhatsApp asset ID and token, and an HTTPS callback reachable by Meta are needed for sandbox acceptance. The operator CLI takes channel tokens from `PULSE_CHANNEL_TOKEN`, not command arguments. Verify the inbound webhook, human send, AI reply, public comment reply, handoff, and analytics against actual sandbox events before enabling live customer replies. The configured model endpoint is an external dependency.
+
+For platform operations, grant an existing authorized user access with `PYTHONPATH=apps/api apps/api/.venv/bin/python -m pulse_api.operator grant-operator --user-id <uuid>` and open `/ops`. This is separate from a tenant owner role. The `Settings` page reports 7/30/90-day usage counts; Pulse has no commercial pricing or payment collection yet.
 
 ## Commerce workflow
 

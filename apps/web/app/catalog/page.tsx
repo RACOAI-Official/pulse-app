@@ -23,7 +23,7 @@ function optionsFromText(value: string) {
   return result;
 }
 
-function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | "staff" }) {
+function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | "manager" | "staff" }) {
   const base = `/tenants/${tenantId}/commerce`;
   const [config, setConfig] = useState<CommerceConfig | null>(null);
   const [products, setProducts] = useState<Product[]>([]);

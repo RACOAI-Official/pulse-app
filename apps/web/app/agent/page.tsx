@@ -17,7 +17,7 @@ type AgentConfig = { draft: Draft; published: Draft | null; published_version: n
   draft_revision: number; tested_revision: number; enabled: boolean };
 type Turn = { role: "user" | "assistant"; content: string };
 
-function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "staff" }) {
+function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "manager" | "staff" }) {
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState("");
