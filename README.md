@@ -1,6 +1,6 @@
 # Pulse
 
-Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md). The [Phase 3 implementation record](docs/implementation/phase-3-agent.md) maps the shipped code, API, database, verification, and remaining sandbox work.
+Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md). The [implementation index](docs/implementation/README.md) maps the shipped phases and remaining work; the [Phase 3 record](docs/implementation/phase-3-agent.md) details the customer agent.
 
 ## Stack
 
