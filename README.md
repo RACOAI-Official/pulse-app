@@ -12,16 +12,16 @@ Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce wo
 ## Local setup
 
 1. Run Docker Desktop, then start the minimal local Supabase stack from the repository root: `supabase start --exclude realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor`. Pulse uses Postgres, Auth, PostgREST, Storage, and Kong locally. The CLI prints the API URL and keys. To use local email capture or Studio, start the optional services separately by removing their names from the exclude list.
-2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false`. Set `PULSE_LLM_CHAT_URL` to the full `/v1/chat/completions` URL, `PULSE_LLM_MODEL` to its served model name, and `PULSE_LLM_API_KEY` if the server requires a bearer token. For Qwen3 servers that support `chat_template_kwargs`, set `PULSE_LLM_DISABLE_THINKING=true` to get reply text within the configured token cap.
+2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api apps/api/.venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false`. Set `PULSE_LLM_CHAT_URL` to the full `/v1/chat/completions` URL, `PULSE_LLM_MODEL` to its served model name, and `PULSE_LLM_API_KEY` if the server requires a bearer token. For Qwen3 servers that support `chat_template_kwargs`, set `PULSE_LLM_DISABLE_THINKING=true` to get reply text within the configured token cap.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
 4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add pending phases without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
 5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv .venv` and `.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
 6. Start Redis (for example, `docker run -d --name pulse-local-redis -p 6379:6379 redis:7.4-alpine`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
 
    ```sh
-   PYTHONPATH=apps/api .venv/bin/uvicorn pulse_api.main:app --reload --port 8000
-   PYTHONPATH=apps/api .venv/bin/celery -A pulse_api.tasks.celery_app worker --loglevel=info
-   PYTHONPATH=apps/api .venv/bin/celery -A pulse_api.tasks.celery_app beat --loglevel=info
+   PYTHONPATH=apps/api apps/api/.venv/bin/uvicorn pulse_api.main:app --reload --port 8000
+   PYTHONPATH=apps/api apps/api/.venv/bin/celery -A pulse_api.tasks.celery_app worker --loglevel=info
+   PYTHONPATH=apps/api apps/api/.venv/bin/celery -A pulse_api.tasks.celery_app beat --loglevel=info
    ```
 
    Run `npm run dev` in `apps/web` and open `http://localhost:3000`.
@@ -29,7 +29,7 @@ Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce wo
 7. Create the first tenant and invite its owner:
 
    ```sh
-   PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator create-tenant --name "Test business" --owner-email owner@example.com
+   PYTHONPATH=apps/api apps/api/.venv/bin/python -m pulse_api.operator create-tenant --name "Test business" --owner-email owner@example.com
    ```
 
    For each Meta sandbox asset, set `PULSE_CHANNEL_TOKEN` in the process environment and run `connect-channel` with `--tenant-id`, `--channel`, `--account-id`, and `--display-name`. Do not put access tokens in command arguments or commit them. The account IDs must be the Page ID, Instagram account ID, and WhatsApp phone number ID that appear in the corresponding webhook payloads.
@@ -42,10 +42,10 @@ Meta webhook callback: `https://<api-host>/webhooks/meta`. Set the same verify t
 
 ## Verification
 
-Run `PYTHONPATH=apps/api .venv/bin/pytest -q apps/api/tests`, `npm run typecheck`, and `npm run build` in `apps/web`. With local Supabase, Redis, and the Celery worker running, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_local.py` exercises Auth, RLS, webhook deduplication, worker processing, inbox reads, owner invites, WebSocket ticket creation, and failed outbound visibility. It creates uniquely named fixture users and tenants in the local database. Real Meta delivery still requires the sandbox credentials and staging hostnames.
+Run `PYTHONPATH=apps/api apps/api/.venv/bin/pytest -q apps/api/tests`, `npm run typecheck`, and `npm run build` in `apps/web`. With local Supabase, Redis, and the Celery worker running, `PYTHONPATH=apps/api apps/api/.venv/bin/python apps/api/tests/integration_local.py` exercises Auth, RLS, webhook deduplication, worker processing, inbox reads, owner invites, WebSocket ticket creation, and failed outbound visibility. It creates uniquely named fixture users and tenants in the local database. Real Meta delivery still requires the sandbox credentials and staging hostnames.
 
 Phase 2's database flow can be checked against a local PostgreSQL server with `psql -X -v ON_ERROR_STOP=1 postgres -f apps/api/tests/commerce_postgres.sql`. This applies both migrations in a transaction, checks stock, payment, cancellation, tenant isolation, and product restoration, then rolls the transaction back.
-With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_commerce_local.py` exercises Auth, tenant isolation, catalog, CSV preview and import, order confirmation, stock reservation and restoration, payment history, and archive/restore through the HTTP API. It creates uniquely named local fixture users and tenants.
+With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/api apps/api/.venv/bin/python apps/api/tests/integration_commerce_local.py` exercises Auth, tenant isolation, catalog, CSV preview and import, order confirmation, stock reservation and restoration, payment history, and archive/restore through the HTTP API. It creates uniquely named local fixture users and tenants.
 
 Phase 3's database checks are `apps/api/tests/agent_postgres.sql` and `apps/api/tests/agent_rls_postgres.sql`; both wrap synthetic records in a transaction and roll back. The first checks fragment coalescing, idempotent replies, media handoff, and human takeover. The second checks tenant isolation, test-before-publish, immutable versions, and enabling live AI. The configured `qwen3` endpoint was checked with a short non-sensitive prompt. A real Meta round trip remains a separate sandbox acceptance check.
 
