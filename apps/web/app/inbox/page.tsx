@@ -139,6 +139,16 @@ function InboxContent({ tenantId }: { tenantId: string }) {
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update conversation"); }
   }
 
+  async function toggleResponder() {
+    if (!selected) return;
+    try {
+      await api(`/tenants/${tenantId}/conversations/${selected.id}/responder`, {
+        method: "POST", body: JSON.stringify({ responder: selected.responder === "ai" ? "human" : "ai" }),
+      });
+      await loadConversations();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not change responder"); }
+  }
+
   async function retry(messageId: string) {
     try {
       await api(`/tenants/${tenantId}/messages/${messageId}/retry`, { method: "POST" });
@@ -161,11 +171,11 @@ function InboxContent({ tenantId }: { tenantId: string }) {
       <div className="panel-foot"><span className="live-dot" /> Live inbox <span>·</span> Human replies</div>
     </section>
     <section className="thread-panel">{selected ? <>
-      <header className="thread-header"><div className="thread-identity"><span className={`channel-avatar ${selected.channel}`}>{selected.channel === "whatsapp" ? "W" : selected.channel === "instagram" ? "I" : "M"}</span><div><strong>{selected.customer_name || selected.external_thread_id}</strong><span>{labels[selected.channel]} conversation</span></div></div><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></header>
+      <header className="thread-header"><div className="thread-identity"><span className={`channel-avatar ${selected.channel}`}>{selected.channel === "whatsapp" ? "W" : selected.channel === "instagram" ? "I" : "M"}</span><div><strong>{selected.customer_name || selected.external_thread_id}</strong><span>{labels[selected.channel]} · {selected.responder === "human" ? "Human takeover" : "AI available"}</span></div></div><div className="thread-actions"><button className="button subtle" onClick={toggleResponder}>{selected.responder === "ai" ? "Take over" : "Return to AI"}</button><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></div></header>
       <div className="thread-timeline"><div className="thread-start"><span>CONVERSATION STARTED</span><i /></div>{messages.map(message => <article key={message.id} className={`bubble-row ${message.direction === "outbound" ? "outbound" : "inbound"}`}><div className="message-bubble">
         {message.body && <p>{message.body}</p>}
         {message.media.map((item, index) => <MediaView key={index} tenantId={tenantId} messageId={message.id} index={index} item={item} />)}
-        <div className="bubble-meta"><span>{message.sender_type === "human" ? "Team" : "Customer"} · {clock(message.created_at)}</span>{message.delivery_state === "sent" ? <CheckCheck size={14} /> : message.delivery_state === "queued" || message.delivery_state === "sending" ? <LoaderCircle size={13} /> : null}</div>
+        <div className="bubble-meta"><span>{message.sender_type === "human" ? "Team" : message.sender_type === "ai" ? "Pulse AI" : message.sender_type === "system" ? "Pulse" : "Customer"} · {clock(message.created_at)}</span>{message.delivery_state === "sent" ? <CheckCheck size={14} /> : message.delivery_state === "queued" || message.delivery_state === "sending" ? <LoaderCircle size={13} /> : null}</div>
         {(message.delivery_state === "failed" || message.delivery_state === "uncertain") && <div className="delivery-error"><CircleAlert size={14} /><span>{message.delivery_state === "uncertain" ? "Delivery uncertain — check the channel before another reply." : message.failure_reason || "Send failed"}</span>{message.delivery_state === "failed" && <button onClick={() => retry(message.id)}>Retry</button>}</div>}
       </div></article>)}</div>
       <div className="composer-wrap">{error && <div className="inbox-error" role="alert">{error}</div>}<form className="composer" onSubmit={send}><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder="Write a reply to this customer…" aria-label="Reply" maxLength={1000} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} /><div className="composer-bottom"><span><ArrowDownLeft size={14} /> Human reply · {draft.length}/1000</span><button type="submit" className="button primary" disabled={busy || !draft.trim()}>{busy ? "Queuing…" : "Send reply"}<Send size={16} /></button></div></form></div>

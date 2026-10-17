@@ -1,20 +1,20 @@
 # Pulse
 
-Pulse Phase 0–2 combines a three-channel Meta sandbox inbox with a local commerce workspace. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md).
+Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md).
 
 ## Stack
 
 - Next.js 16, React 19, Supabase Auth
-- FastAPI, Redis/Celery, Meta Graph APIs
+- FastAPI, Redis/Celery, Meta Graph APIs, and a configurable OpenAI-compatible local model endpoint
 - Supabase Postgres with tenant row-level security and private Storage
 - Docker Compose and Caddy for staging
 
 ## Local setup
 
 1. Run Docker Desktop, then start the minimal local Supabase stack from the repository root: `supabase start --exclude realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor`. Pulse uses Postgres, Auth, PostgREST, Storage, and Kong locally. The CLI prints the API URL and keys. To use local email capture or Studio, start the optional services separately by removing their names from the exclude list.
-2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false` for the human inbox.
+2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api .venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false`. Set `PULSE_LLM_CHAT_URL` to the full `/v1/chat/completions` URL, `PULSE_LLM_MODEL` to its served model name, and `PULSE_LLM_API_KEY` if the server requires a bearer token. For Qwen3 servers that support `chat_template_kwargs`, set `PULSE_LLM_DISABLE_THINKING=true` to get reply text within the configured token cap.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
-4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add Phase 2 without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
+4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add pending phases without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
 5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv .venv` and `.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
 6. Start Redis (for example, `docker run -d --name pulse-local-redis -p 6379:6379 redis:7.4-alpine`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
 
@@ -46,6 +46,20 @@ Run `PYTHONPATH=apps/api .venv/bin/pytest -q apps/api/tests`, `npm run typecheck
 
 Phase 2's database flow can be checked against a local PostgreSQL server with `psql -X -v ON_ERROR_STOP=1 postgres -f apps/api/tests/commerce_postgres.sql`. This applies both migrations in a transaction, checks stock, payment, cancellation, tenant isolation, and product restoration, then rolls the transaction back.
 With local Supabase running and the Phase 2 migration applied, `PYTHONPATH=apps/api .venv/bin/python apps/api/tests/integration_commerce_local.py` exercises Auth, tenant isolation, catalog, CSV preview and import, order confirmation, stock reservation and restoration, payment history, and archive/restore through the HTTP API. It creates uniquely named local fixture users and tenants.
+
+Phase 3's database checks are `apps/api/tests/agent_postgres.sql` and `apps/api/tests/agent_rls_postgres.sql`; both wrap synthetic records in a transaction and roll back. The first checks fragment coalescing, idempotent replies, media handoff, and human takeover. The second checks tenant isolation, test-before-publish, immutable versions, and enabling live AI. The configured `qwen3` endpoint was checked with a short non-sensitive prompt. A real Meta round trip remains a separate sandbox acceptance check.
+
+## Agent workflow
+
+In **Agent Studio**, an owner enters business identity and voice, policies, FAQs, and the attachment handoff reply. Save a draft, test it privately in the phone panel, then publish. A saved edit invalidates the previous test until the new draft is tested. Publishing stores an immutable version; live AI stays off until the owner enables it. If live AI is already on, publishing the tested draft updates live replies immediately after the confirmation in the dashboard.
+
+Inbound text waits for three seconds of quiet, up to eight seconds from the first fragment. The worker reads only tenant-scoped published knowledge and current active catalog prices and stock, then asks the configured local model for a response. Media and inference failures are handed to a human with the configured holding reply. A human reply takes over the conversation; staff can explicitly return it to AI in **Inbox**. The database checks ownership again before an AI reply is queued. The existing outbound worker enforces Meta's response window.
+
+The model adapter uses no additional Docker image. The current supplied ngrok model endpoint is configured only in the ignored local `.env`; it is an external dependency and may change. Do not enable customer AI until the model has been evaluated on real authorized Bangla and Banglish examples. Model output can still be wrong despite grounding instructions.
+
+## Sandbox readiness
+
+The remote Supabase project has the Phase 3 migrations, but no owner account, tenant, channel connection, or real Meta message yet. To start a real sandbox round trip, provide the owner email, Meta app secret, webhook verify token and Graph API version, and each test Page/Instagram/WhatsApp asset ID plus its access token. The API also needs an HTTPS callback URL reachable by Meta; a temporary tunnel is possible for local testing. The model endpoint is already configured locally. These are distinct credentials and assets; a Meta app key and secret alone do not identify the channels or provide a public callback.
 
 ## Commerce workflow
 

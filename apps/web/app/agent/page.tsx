@@ -1,0 +1,134 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "lucide-react";
+import WorkspaceShell from "@/components/WorkspaceShell";
+import { api } from "@/lib/api";
+
+type Fact = { topic: string; content: string };
+type Faq = { question: string; answer: string };
+type Draft = {
+  business_name: string; business_description: string; behavior: string;
+  language: "auto" | "bangla" | "english";
+  addressing: "neutral" | "customer_preference";
+  policies: Fact[]; faqs: Faq[]; media_reply: string;
+};
+type AgentConfig = { draft: Draft; published: Draft | null; published_version: number;
+  draft_revision: number; tested_revision: number; enabled: boolean };
+type Turn = { role: "user" | "assistant"; content: string };
+
+function AgentContent({ tenantId, role }: { tenantId: string; role: "owner" | "staff" }) {
+  const [config, setConfig] = useState<AgentConfig | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [saved, setSaved] = useState("");
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [prompt, setPrompt] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const base = `/tenants/${tenantId}/agent`;
+  const dirty = useMemo(() => draft ? JSON.stringify(draft) !== saved : false, [draft, saved]);
+  const canPublish = !!config && !dirty && config.draft_revision > 0 && config.tested_revision === config.draft_revision;
+
+  useEffect(() => {
+    let active = true;
+    api<AgentConfig>(base).then(value => {
+      if (!active) return;
+      setConfig(value); setDraft(value.draft); setSaved(JSON.stringify(value.draft)); setLoading(false);
+    }).catch(error => { if (active) { setNotice(error instanceof Error ? error.message : "Could not load agent"); setLoading(false); } });
+    return () => { active = false; };
+  }, [base]);
+
+  async function act(work: () => Promise<void>) {
+    setBusy(true); setNotice("");
+    try { await work(); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Action failed"); }
+    finally { setBusy(false); }
+  }
+
+  function edit<K extends keyof Draft>(key: K, value: Draft[K]) {
+    setDraft(current => current ? { ...current, [key]: value } : current);
+  }
+
+  async function save() {
+    if (!draft) return;
+    await act(async () => {
+      const result = await api<{ draft_revision: number }>(`${base}/draft`, {
+        method: "PUT", body: JSON.stringify(draft),
+      });
+      setSaved(JSON.stringify(draft)); setTurns([]);
+      setConfig(current => current ? { ...current, draft_revision: result.draft_revision,
+        tested_revision: 0, draft } : current);
+      setNotice("Draft saved. Test it before publishing.");
+    });
+  }
+
+  async function test(event: FormEvent) {
+    event.preventDefault();
+    if (!prompt.trim() || dirty || !config || !draft?.business_name.trim()) return;
+    const question = prompt.trim();
+    await act(async () => {
+      const result = await api<{ response: string; tested_revision: number | null }>(`${base}/test`, {
+        method: "POST", body: JSON.stringify({ prompt: question, history: turns.slice(-8) }),
+      });
+      setTurns(current => [...current, { role: "user", content: question },
+        { role: "assistant", content: result.response }]);
+      setPrompt("");
+      if (result.tested_revision !== null) {
+        setConfig(current => current ? { ...current, tested_revision: result.tested_revision! } : current);
+      } else setNotice("The draft changed while testing. Test the latest saved version.");
+    });
+  }
+
+  async function publish() {
+    if (!canPublish || !window.confirm(config?.enabled
+      ? "Publish this tested draft to live customer conversations?"
+      : "Publish this tested draft? You can enable live replies afterward.")) return;
+    await act(async () => {
+      const result = await api<{ published_version: number; enabled: boolean }>(`${base}/publish`, { method: "POST" });
+      setConfig(current => current ? { ...current, published_version: result.published_version,
+        published: current.draft, enabled: result.enabled } : current);
+      setNotice(`Version ${result.published_version} published.`);
+    });
+  }
+
+  async function toggleLive() {
+    if (!config) return;
+    await act(async () => {
+      const result = await api<{ enabled: boolean }>(`${base}/enabled`, {
+        method: "POST", body: JSON.stringify({ enabled: !config.enabled }),
+      });
+      setConfig(current => current ? { ...current, enabled: result.enabled } : current);
+      setNotice(result.enabled ? "Live AI replies enabled." : "Live AI replies paused.");
+    });
+  }
+
+  if (loading) return <main className="agent-page"><p>Opening agent studio…</p></main>;
+  if (!draft || !config) return <main className="agent-page"><p role="alert">{notice || "Agent configuration unavailable"}</p></main>;
+  return <main className="agent-page">
+    <header className="agent-heading"><div><span className="eyebrow">PULSE / AGENT STUDIO</span><h1>Teach it. Test it. Then go live.</h1><p>The draft stays private until you publish it. Customer replies always use current catalog data.</p></div><div className="agent-state"><span className={config.enabled ? "live-dot" : "paused-dot"} />{config.enabled ? "Live replies on" : "Live replies off"}<small>Published v{config.published_version || "—"}</small></div></header>
+    {notice && <div className="form-notice" role="status">{notice}</div>}
+    <div className="agent-grid"><div className="agent-editor">
+      <section className="agent-card"><div className="agent-card-head"><BookOpen size={19} /><div><span className="eyebrow">01 / IDENTITY</span><h2>Business and voice</h2></div></div>
+        <div className="agent-fields"><label>Business name<input disabled={role !== "owner"} value={draft.business_name} maxLength={120} onChange={e => edit("business_name", e.target.value)} placeholder="Your store name" /></label>
+          <label>What your business does<textarea disabled={role !== "owner"} value={draft.business_description} maxLength={3000} onChange={e => edit("business_description", e.target.value)} placeholder="What you sell, who you serve, and useful context" /></label>
+          <label>How the assistant should behave<textarea disabled={role !== "owner"} value={draft.behavior} maxLength={1500} onChange={e => edit("behavior", e.target.value)} placeholder="Be warm, concise, and ask when details are missing" /></label>
+          <div className="agent-pair"><label>Reply language<select disabled={role !== "owner"} value={draft.language} onChange={e => edit("language", e.target.value as Draft["language"])}><option value="auto">Match customer</option><option value="bangla">Bangla</option><option value="english">English</option></select></label><label>Addressing<select disabled={role !== "owner"} value={draft.addressing} onChange={e => edit("addressing", e.target.value as Draft["addressing"])}><option value="neutral">Neutral</option><option value="customer_preference">Use stated preference</option></select></label></div>
+        </div></section>
+      <section className="agent-card"><div className="agent-card-head"><BookOpen size={19} /><div><span className="eyebrow">02 / KNOWLEDGE</span><h2>Policies and facts</h2></div></div><p className="agent-help">Store delivery, payment, return, and support facts here. Prices and stock come from the live catalog.</p>
+        {draft.policies.map((fact, index) => <div className="agent-entry" key={index}><input disabled={role !== "owner"} aria-label={`Policy ${index + 1} topic`} placeholder="Topic, e.g. Delivery" value={fact.topic} onChange={e => edit("policies", draft.policies.map((item, i) => i === index ? { ...item, topic: e.target.value } : item))} /><textarea disabled={role !== "owner"} aria-label={`Policy ${index + 1} content`} placeholder="What should customers know?" value={fact.content} onChange={e => edit("policies", draft.policies.map((item, i) => i === index ? { ...item, content: e.target.value } : item))} /><button disabled={role !== "owner"} aria-label={`Remove policy ${index + 1}`} onClick={() => edit("policies", draft.policies.filter((_, i) => i !== index))}><Trash2 size={15} /></button></div>)}
+        {role === "owner" && <button className="button subtle" disabled={draft.policies.length >= 30} onClick={() => edit("policies", [...draft.policies, { topic: "", content: "" }])}><Plus size={14} /> Add policy</button>}
+      </section>
+      <section className="agent-card"><div className="agent-card-head"><BookOpen size={19} /><div><span className="eyebrow">03 / ANSWERS</span><h2>Frequently asked questions</h2></div></div>
+        {draft.faqs.map((faq, index) => <div className="agent-entry" key={index}><input disabled={role !== "owner"} aria-label={`FAQ ${index + 1} question`} placeholder="Customer question" value={faq.question} onChange={e => edit("faqs", draft.faqs.map((item, i) => i === index ? { ...item, question: e.target.value } : item))} /><textarea disabled={role !== "owner"} aria-label={`FAQ ${index + 1} answer`} placeholder="Approved answer" value={faq.answer} onChange={e => edit("faqs", draft.faqs.map((item, i) => i === index ? { ...item, answer: e.target.value } : item))} /><button disabled={role !== "owner"} aria-label={`Remove FAQ ${index + 1}`} onClick={() => edit("faqs", draft.faqs.filter((_, i) => i !== index))}><Trash2 size={15} /></button></div>)}
+        {role === "owner" && <button className="button subtle" disabled={draft.faqs.length >= 100} onClick={() => edit("faqs", [...draft.faqs, { question: "", answer: "" }])}><Plus size={14} /> Add FAQ</button>}
+      </section>
+      <section className="agent-card"><div className="agent-card-head"><Bot size={19} /><div><span className="eyebrow">04 / HANDOFF</span><h2>When a human is needed</h2></div></div><label className="agent-single">Reply for photos, voice notes, or unavailable AI<textarea disabled={role !== "owner"} maxLength={500} value={draft.media_reply} onChange={e => edit("media_reply", e.target.value)} /></label></section>
+      {role === "owner" && <div className="agent-publish"><button className="button primary" disabled={busy || !dirty} onClick={save}><Check size={16} /> Save draft</button><span>{dirty ? "Unsaved changes" : config.tested_revision === config.draft_revision && config.draft_revision > 0 ? "Draft tested" : "Test the saved draft"}</span><button className="button" disabled={busy || !canPublish} onClick={publish}>Publish version</button><button className="button subtle" disabled={busy || !config.published} onClick={toggleLive}>{config.enabled ? <><CirclePause size={16} /> Pause AI</> : <><CirclePlay size={16} /> Enable AI</>}</button></div>}
+    </div><aside className="agent-preview"><div className="preview-head"><FlaskConical size={18} /><div><strong>Private test phone</strong><span>Draft · never sends to Meta</span></div><button className="text-button" onClick={() => setTurns([])}>Clear</button></div><div className="preview-thread">{turns.length ? turns.map((turn, index) => <div key={index} className={`preview-bubble ${turn.role}`}>{turn.content}</div>) : <div className="preview-empty"><Bot size={32} /><strong>Start as a customer.</strong><p>Ask about products, delivery, or a tricky situation. Test in Bangla, Banglish, and English.</p></div>}</div><form onSubmit={test} className="preview-composer"><textarea aria-label="Test message" value={prompt} maxLength={1000} onChange={e => setPrompt(e.target.value)} placeholder={dirty ? "Save your draft to test it" : "Ask your assistant…"} disabled={busy || dirty || !draft.business_name.trim()} /><button className="button primary" disabled={busy || dirty || !prompt.trim() || !draft.business_name.trim()}><Send size={16} /> {busy ? "Thinking…" : "Test reply"}</button></form><p className="preview-foot">AI can make mistakes. Check facts and tone before publishing.</p></aside></div>
+  </main>;
+}
+
+export default function AgentPage() {
+  return <WorkspaceShell>{workspace => <AgentContent key={workspace.tenantId} tenantId={workspace.tenantId} role={workspace.current?.role || "staff"} />}</WorkspaceShell>;
+}

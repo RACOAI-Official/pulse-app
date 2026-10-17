@@ -21,6 +21,7 @@ export interface Conversation {
   external_thread_id: string;
   customer_name: string | null;
   state: "open" | "resolved";
+  responder: "ai" | "human";
   unread_count: number;
   last_inbound_at: string | null;
   last_message_at: string;
@@ -37,7 +38,7 @@ export interface Message {
   id: string;
   conversation_id: string;
   direction: "inbound" | "outbound";
-  sender_type: "customer" | "human" | "system";
+  sender_type: "customer" | "human" | "system" | "ai";
   body: string | null;
   media: InboxMedia[];
   delivery_state: "queued" | "sending" | "sent" | "failed" | "uncertain" | null;
