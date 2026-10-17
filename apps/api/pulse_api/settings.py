@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     meta_verify_token: str
     meta_graph_version: str
     pulse_echo_mode: bool = False
+    pulse_llm_chat_url: str = ""
+    pulse_llm_model: str = ""
+    pulse_llm_api_key: str = ""
+    pulse_llm_disable_thinking: bool = False
 
 
 @lru_cache

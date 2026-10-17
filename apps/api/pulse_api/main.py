@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import httpx
@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .meta import extract_messages, verify_signature
+from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, generate_reply
 from .settings import get_settings
 from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
 from .tasks import process_webhook, send_outbound
@@ -22,7 +23,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().pulse_web_origin],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "PUT"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -66,6 +67,108 @@ async def membership(tenant_id: UUID, token: str) -> dict:
     if not rows:
         raise HTTPException(404, "Tenant not found")
     return rows[0]
+
+
+async def owner(tenant_id: UUID, token: str) -> dict:
+    member = await membership(tenant_id, token)
+    if member["role"] != "owner":
+        raise HTTPException(403, "Owner role required")
+    return member
+
+
+class AgentFact(BaseModel):
+    topic: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=1000)
+
+
+class AgentFaq(BaseModel):
+    question: str = Field(min_length=1, max_length=200)
+    answer: str = Field(min_length=1, max_length=1000)
+
+
+class AgentDraft(BaseModel):
+    business_name: str = Field(default="", max_length=120)
+    business_description: str = Field(default="", max_length=3000)
+    behavior: str = Field(default="Friendly, concise, and honest.", max_length=1500)
+    language: Literal["auto", "bangla", "english"] = "auto"
+    addressing: Literal["neutral", "customer_preference"] = "neutral"
+    policies: list[AgentFact] = Field(default_factory=list, max_length=30)
+    faqs: list[AgentFaq] = Field(default_factory=list, max_length=100)
+    media_reply: str = Field(default=DEFAULT_DRAFT["media_reply"], min_length=1, max_length=500)
+
+
+class TestTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=1000)
+
+
+class AgentTestRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    history: list[TestTurn] = Field(default_factory=list, max_length=8)
+
+
+class EnabledRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/tenants/{tenant_id}/agent")
+async def get_agent(tenant_id: UUID, auth: Session) -> dict:
+    await membership(tenant_id, auth[0])
+    return await asyncio.to_thread(config_for_tenant, str(tenant_id))
+
+
+@app.put("/tenants/{tenant_id}/agent/draft")
+async def save_agent_draft(tenant_id: UUID, data: AgentDraft, auth: Session) -> dict:
+    await owner(tenant_id, auth[0])
+    revision = await user_request("POST", "rpc/pulse_save_agent_draft", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_draft": data.model_dump(),
+    })
+    return {"draft_revision": revision, "tested_revision": 0}
+
+
+@app.post("/tenants/{tenant_id}/agent/test")
+async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> dict:
+    await membership(tenant_id, auth[0])
+    current = await asyncio.to_thread(config_for_tenant, str(tenant_id))
+    draft = current["draft"]
+    if not draft.get("business_name", "").strip():
+        raise HTTPException(409, "Save a business name before testing")
+    try:
+        facts = await asyncio.to_thread(catalog_facts, str(tenant_id), data.prompt)
+        answer = await asyncio.to_thread(generate_reply, draft, data.prompt, facts,
+                                         [turn.model_dump() for turn in data.history])
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        logger.warning("Agent test unavailable for tenant %s: %s", tenant_id, type(exc).__name__)
+        raise HTTPException(503, "Local model unavailable. Check endpoint and model configuration") from exc
+    await user_request("POST", "agent_test_runs", auth[0], body={
+        "tenant_id": str(tenant_id), "user_id": auth[1]["id"],
+        "prompt": data.prompt, "response": answer,
+        "draft_revision": current["draft_revision"],
+    })
+    tested = await user_request("POST", "rpc/pulse_mark_agent_tested", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_revision": current["draft_revision"],
+    })
+    return {"response": answer, "version": "draft", "catalog_matches": len(facts),
+            "tested_revision": current["draft_revision"] if tested else None}
+
+
+@app.post("/tenants/{tenant_id}/agent/publish")
+async def publish_agent(tenant_id: UUID, auth: Session) -> dict:
+    await owner(tenant_id, auth[0])
+    version = await user_request("POST", "rpc/pulse_publish_agent", auth[0], body={
+        "p_tenant_id": str(tenant_id),
+    })
+    current = await asyncio.to_thread(config_for_tenant, str(tenant_id))
+    return {"published_version": version, "enabled": current["enabled"]}
+
+
+@app.post("/tenants/{tenant_id}/agent/enabled")
+async def set_agent_enabled(tenant_id: UUID, data: EnabledRequest, auth: Session) -> dict:
+    await owner(tenant_id, auth[0])
+    enabled = await user_request("POST", "rpc/pulse_set_agent_enabled", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_enabled": data.enabled,
+    })
+    return {"enabled": enabled}
 
 
 @app.get("/me/tenants")
@@ -155,6 +258,20 @@ async def reply(tenant_id: UUID, conversation_id: UUID, data: ReplyBody, auth: S
 class ConversationUpdate(BaseModel):
     state: str | None = Field(default=None, pattern="^(open|resolved)$")
     mark_read: bool = False
+
+
+class ResponderUpdate(BaseModel):
+    responder: Literal["ai", "human"]
+
+
+@app.post("/tenants/{tenant_id}/conversations/{conversation_id}/responder")
+async def set_responder(tenant_id: UUID, conversation_id: UUID,
+                        data: ResponderUpdate, auth: Session) -> dict:
+    await conversation_for_user(tenant_id, conversation_id, auth[0])
+    responder = await user_request("POST", "rpc/pulse_set_responder", auth[0], body={
+        "p_conversation_id": str(conversation_id), "p_responder": data.responder,
+    })
+    return {"responder": responder}
 
 
 @app.patch("/tenants/{tenant_id}/conversations/{conversation_id}")

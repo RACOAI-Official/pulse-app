@@ -8,6 +8,7 @@ from celery import Celery
 from cryptography.fernet import Fernet
 
 from .media import save_media
+from .agent import catalog_facts, config_for_tenant, generate_reply, recent_history
 from .meta import send_text
 from .settings import get_settings
 from .store import eq, service_headers, service_request
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 celery_app = Celery("pulse", broker=get_settings().redis_url)
 celery_app.conf.beat_schedule = {
     "reconcile-pending": {"task": "pulse.reconcile", "schedule": 30.0},
+    "reconcile-agent": {"task": "pulse.reconcile_agent", "schedule": 2.0},
     "purge-retention": {"task": "pulse.purge_retention", "schedule": 86400.0},
 }
 
@@ -72,7 +74,8 @@ def process_webhook(event_id: str) -> None:
                 "p_media": media,
                 "p_customer_name": incoming.get("customer_name"),
             })
-        if message_id and get_settings().pulse_echo_mode and incoming.get("body"):
+        agent_enabled = config_for_tenant(event["tenant_id"])["enabled"] if message_id else False
+        if message_id and get_settings().pulse_echo_mode and not agent_enabled and incoming.get("body"):
             # A sandbox-only echo is deliberately disabled when the human inbox is active.
             send_text(connection["channel"], connection["external_account_id"],
                       incoming["sender_id"], token, incoming["body"])
@@ -84,6 +87,54 @@ def process_webhook(event_id: str) -> None:
         status = "failed" if event["attempts"] >= 5 else "pending"
         service_request("PATCH", "webhook_events", params={"id": eq(event_id)},
                         body={"status": status, "last_error": str(exc)[:500]})
+
+
+@celery_app.task(name="pulse.process_agent_job")
+def process_agent_job(job_id: str) -> None:
+    job = service_request("POST", "rpc/pulse_claim_agent_job", body={"p_job_id": job_id})
+    if not job:
+        return
+    handoff = job["kind"] == "media"
+    try:
+        config = config_for_tenant(job["tenant_id"])
+        if not config["enabled"] or not config["published"]:
+            service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
+                            body={"status": "cancelled"})
+            return
+        if handoff:
+            reply = config["published"].get("media_reply") or "A teammate will help with your attachment."
+        else:
+            rows = service_request("GET", "messages", params={
+                "conversation_id": eq(job["conversation_id"]),
+                "direction": "eq.inbound", "created_at": f"gte.{job['first_at']}",
+                "select": "id,body,created_at", "order": "created_at.asc", "limit": "10",
+            })
+            prompt = "\n".join(row["body"] for row in rows if row.get("body"))
+            if not prompt.strip():
+                raise ValueError("No text in agent job")
+            facts = catalog_facts(job["tenant_id"], prompt)
+            history = recent_history(job["conversation_id"], job["first_at"])
+            reply = generate_reply(config["published"], prompt, facts, history)
+        reply_id = service_request("POST", "rpc/pulse_complete_agent_job", body={
+            "p_job_id": job_id, "p_body": reply, "p_handoff": handoff,
+        })
+        if reply_id:
+            send_outbound.delay(reply_id)
+            _publish(job["tenant_id"])
+    except Exception as exc:
+        logger.exception("Agent job failed: %s", job_id)
+        try:
+            fallback = ((config.get("published") or {}).get("media_reply") or
+                        "I am passing this to a team member who can help.")
+            reply_id = service_request("POST", "rpc/pulse_complete_agent_job", body={
+                "p_job_id": job_id, "p_body": fallback, "p_handoff": True,
+            })
+            if reply_id:
+                send_outbound.delay(reply_id)
+                _publish(job["tenant_id"])
+        except Exception:
+            service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
+                            body={"status": "failed", "last_error": type(exc).__name__})
 
 
 @celery_app.task(name="pulse.send_outbound")
@@ -132,6 +183,20 @@ def send_outbound(message_id: str) -> None:
         _publish(message["tenant_id"])
 
 
+@celery_app.task(name="pulse.reconcile_agent")
+def reconcile_agent_jobs() -> None:
+    stale_agent = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    service_request("PATCH", "agent_jobs", params={
+        "status": "eq.processing", "claimed_at": f"lt.{stale_agent}",
+    }, body={"status": "pending", "claimed_at": None})
+    jobs = service_request("GET", "agent_jobs", params={
+        "status": "eq.pending", "due_at": f"lte.{_now()}",
+        "select": "id", "order": "due_at.asc", "limit": "100",
+    })
+    for job in jobs:
+        process_agent_job.delay(job["id"])
+
+
 @celery_app.task(name="pulse.reconcile")
 def reconcile() -> None:
     stale_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
@@ -160,6 +225,7 @@ def reconcile() -> None:
 def purge_retention() -> None:
     settings = get_settings()
     media_cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    service_request("DELETE", "agent_test_runs", params={"created_at": f"lt.{media_cutoff}"})
     text_cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
     old_media = service_request("GET", "messages", params={
         "created_at": f"lt.{media_cutoff}", "media": "neq.[]",
