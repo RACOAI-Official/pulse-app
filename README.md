@@ -1,6 +1,6 @@
 # Pulse
 
-Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md).
+Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce workspace, and versioned customer agent. The product brief is [Pulse-documentation.md](Pulse-documentation.md); the reference investigation and limits are in [docs/reverse-engineering](docs/reverse-engineering/README.md). The [Phase 3 implementation record](docs/implementation/phase-3-agent.md) maps the shipped code, API, database, verification, and remaining sandbox work.
 
 ## Stack
 
@@ -15,8 +15,8 @@ Pulse Phase 0–3 combines a three-channel Meta sandbox inbox, local commerce wo
 2. Copy `.env.example` to `.env`, set the Supabase values, a fresh `PULSE_CREDENTIAL_KEY` from `PYTHONPATH=apps/api apps/api/.venv/bin/python -m pulse_api.operator generate-key`, Meta app secret and webhook verify token, and a supported `META_GRAPH_VERSION` from your Meta app. Set `PULSE_ECHO_MODE=false`. Set `PULSE_LLM_CHAT_URL` to the full `/v1/chat/completions` URL, `PULSE_LLM_MODEL` to its served model name, and `PULSE_LLM_API_KEY` if the server requires a bearer token. For Qwen3 servers that support `chat_template_kwargs`, set `PULSE_LLM_DISABLE_THINKING=true` to get reply text within the configured token cap.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set the local Supabase URL/anon key and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
 4. The minimal `supabase start` command applies the versioned migrations on a new local project. For an existing local project, run `supabase migration up` to add pending phases without resetting data. Configure custom SMTP in Supabase Auth for real invitations and recovery email. Local Mailpit starts only when you remove it from the exclude list.
-5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv .venv` and `.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
-6. Start Redis (for example, `docker run -d --name pulse-local-redis -p 6379:6379 redis:7.4-alpine`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
+5. Install API dependencies in a Python 3.12 virtual environment: `python3.12 -m venv apps/api/.venv` and `apps/api/.venv/bin/pip install -r apps/api/requirements.txt`. Install web dependencies with `npm ci` in `apps/web`.
+6. Start an existing local Redis service (on macOS with Homebrew, `brew services start redis`), then run API, Celery worker, and Celery beat in separate terminals from the repository root:
 
    ```sh
    PYTHONPATH=apps/api apps/api/.venv/bin/uvicorn pulse_api.main:app --reload --port 8000
@@ -61,7 +61,7 @@ The model adapter uses no additional Docker image. The current supplied ngrok mo
 
 ## Sandbox readiness
 
-The remote Supabase project has the Phase 3 migrations, but no owner account, tenant, channel connection, or real Meta message yet. To start a real sandbox round trip, provide the owner email, Meta app secret, webhook verify token and Graph API version, and each test Page/Instagram/WhatsApp asset ID plus its access token. The API also needs an HTTPS callback URL reachable by Meta; a temporary tunnel is possible for local testing. The model endpoint is already configured locally. These are distinct credentials and assets; a Meta app key and secret alone do not identify the channels or provide a public callback.
+The remote Supabase project has the Phase 3 migrations, but no owner account, tenant, channel connection, or real Meta message yet. The supplied four-character owner password was rejected by Supabase Auth; a valid password is needed to finish owner setup. A real sandbox round trip also needs the Meta app secret, webhook verify token and Graph API version, and each test Page/Instagram/WhatsApp asset ID plus its access token. The API needs an HTTPS callback URL reachable by Meta; a temporary tunnel is possible for local testing. The model endpoint is configured locally. These are distinct credentials and assets; a Meta app key and secret alone do not identify the channels or provide a public callback.
 
 ## Commerce workflow
 

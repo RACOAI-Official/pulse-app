@@ -22,4 +22,4 @@ UI controls can establish that a workflow exists without proving its persistence
 
 ## Current baseline
 
-The workspace now has a Phase 0+1 Pulse implementation. The reference account shows Free-plan limits of one connected channel and three products. A number of screens are previews or upgrade gates. Recheck this inventory after product changes or when a Standard account, connected channel, and sample conversations become available. The REA capture remains limited to the public login page until its separate debugging profile is authenticated.
+The workspace now has Phase 0–3 implementations; the shipped customer agent is recorded in [the Phase 3 implementation record](../implementation/phase-3-agent.md). This does not mean every feature in the broader Pulse brief is built. The reference account shows Free-plan limits of one connected channel and three products. A number of screens are previews or upgrade gates. Recheck this inventory after product changes or when a Standard account, connected channel, and sample conversations become available. The REA capture remains limited to the public login page until its separate debugging profile is authenticated.
