@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUpRight, Bot, Inbox, MessageSquare, ShoppingBag, Users } from "lucide-react";
+import { ArrowUpRight, Bot, Inbox, MessageSquare, ShoppingBag, Users } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api, ChannelConnection } from "@/lib/api";
 import OnboardingCard from "@/components/OnboardingCard";

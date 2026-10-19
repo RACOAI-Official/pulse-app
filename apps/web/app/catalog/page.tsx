@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react";
-import { Archive, FileUp, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, FileUp, PackagePlus, RefreshCw, Trash2 } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 import { CommerceConfig, Currency, decimal, money, Product, toMinor } from "@/lib/commerce";

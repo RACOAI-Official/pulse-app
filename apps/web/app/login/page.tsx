@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Mail, LockKeyhole } from "lucide-react";
+import { ArrowRight, Mail, LockKeyhole } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
 
 export default function Login() {

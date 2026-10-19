@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { Camera, Mail, MessageCircle, ShieldCheck, Users, Send, Activity } from "lucide-react";
+import { Camera, Mail, MessageCircle, ShieldCheck, Users, Send, Activity } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api, ChannelConnection } from "@/lib/api";
 

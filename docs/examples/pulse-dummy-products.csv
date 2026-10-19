@@ -1,0 +1,5 @@
+product_key,title,category,description,sku,options,regular_price,offer_price,stock,image_urls,delivery_charge
+pulse-tee-demo,Pulse Cotton Tee,Apparel,Soft cotton everyday tee,TEE-BLK-M,Size=M|Color=Black,950.00,850.00,12,https://placehold.co/600x600/png?text=Pulse+Tee,60.00
+pulse-tee-demo,Pulse Cotton Tee,Apparel,Soft cotton everyday tee,TEE-BLK-L,Size=L|Color=Black,950.00,850.00,8,https://placehold.co/600x600/png?text=Pulse+Tee,60.00
+pulse-mug-demo,Pulse Ceramic Mug,Home,Durable ceramic mug,MUG-WHT,Color=White,450.00,,20,https://placehold.co/600x600/png?text=Pulse+Mug,60.00
+pulse-notebook-demo,Pulse Notebook,Stationery,Hardcover ruled notebook,NOTE-GRN,Color=Green,320.00,290.00,15,https://placehold.co/600x600/png?text=Pulse+Notebook,60.00

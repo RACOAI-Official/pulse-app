@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 

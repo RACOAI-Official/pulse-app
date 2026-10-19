@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { MessageSquare, RefreshCw, Ticket, ShoppingBag } from "lucide-react";
+import { MessageSquare, RefreshCw, Ticket, ShoppingBag } from "@/components/icons";
 import { api, Conversation } from "@/lib/api";
 import { CommerceOrder, money } from "@/lib/commerce";
 

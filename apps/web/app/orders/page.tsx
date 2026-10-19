@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 import { CommerceConfig, CommerceOrder, decimal, money, OrderState, Product, toMinor } from "@/lib/commerce";

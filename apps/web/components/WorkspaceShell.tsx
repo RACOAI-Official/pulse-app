@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "lucide-react";
+import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "@/components/icons";
 import { useWorkspace } from "@/lib/workspace";
 
 export type Workspace = ReturnType<typeof useWorkspace>;
@@ -34,7 +34,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
       <Link href="/dashboard" className="rail-brand" onClick={() => setOpen(false)} aria-label="Pulse dashboard">P<span>.</span><strong>Pulse</strong></Link>
       <nav aria-label="Main navigation">{sections.map(section => <div className="nav-section" key={section.label}>
         <div className="nav-section-label">{section.label}</div>
-        {section.items.map(item => { const Icon = item.icon; return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={`rail-link ${pathname === item.href ? "active" : ""}`}><Icon size={17} /><span>{item.label}</span></Link>; })}
+        {section.items.map(item => { const Icon = item.icon; const active = pathname === item.href; return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`rail-link ${active ? "active" : ""}`}><Icon size={17} weight={active ? "fill" : "regular"} /><span>{item.label}</span></Link>; })}
       </div>)}</nav>
       <button className="rail-link rail-exit" onClick={workspace.signOut}><LogOut size={17} /><span>Sign out</span></button>
     </aside>
