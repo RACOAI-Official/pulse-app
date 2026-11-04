@@ -1,0 +1,13 @@
+/* Hallmark v2.0.0 | Pulse workspace base | redesign: full */
+/* Hallmark critique: prior controls were cramped and keyboard focus was faint. */
+html,body{overflow-x:clip}
+body{font-family:var(--font-body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--font-display);line-height:1.18;letter-spacing:-.035em;overflow-wrap:break-word;min-width:0}
+button,input,textarea,select{font-family:var(--font-body);font-size:15px}
+button,a,input,textarea,select,[role="button"]{transition:background-color .18s ease,color .18s ease,border-color .18s ease,transform .18s ease,opacity .18s ease}
+:where(button,a,input,textarea,select,[role="button"]):focus-visible{outline:3px solid var(--focus);outline-offset:3px;transition:none}
+:where(button,a,[role="button"]):active:not(:disabled){transform:translateY(1px)}
+:where(button,input,textarea,select):disabled{opacity:.55;cursor:not-allowed}
+input,textarea,select{min-height:44px}
+::selection{background:var(--lime);color:var(--text)}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}

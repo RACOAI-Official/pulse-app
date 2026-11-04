@@ -1,0 +1,3 @@
+/* Hallmark v2.0.0 | Pulse design tokens */
+/* Hallmark critique: role-based mint, cream, teal tokens replace dark legacy values. */
+:root{--bg:#d7e6e2;--surface:#fbfcf7;--surface-2:#f1f4ed;--surface-3:#e3eddf;--line:#d6e0d9;--text:#153b37;--muted:#536d66;--soft:#385e57;--lime:#c7eba4;--lime-dim:#e2f0d2;--danger:#a53c3b;--teal:#11635d;--teal-deep:#0c4f4b;--white:#fbfcf7;--shadow:rgba(25,65,55,.10);--focus:#073d38;--warning-bg:#fff4e7;--warning-text:#704c29;--font-body:"Inter",sans-serif;--font-display:"Satoshi","Inter",sans-serif}

@@ -10,6 +10,7 @@ node_modules/
 *.pyc
 *.tsbuildinfo
 .DS_Store
+.pulse-local/
 supabase/.branches/
 supabase/.profiles/
 supabase/.temp/
