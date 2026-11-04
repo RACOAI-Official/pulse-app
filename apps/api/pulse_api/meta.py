@@ -34,10 +34,13 @@ class IncomingComment:
 def verify_signature(body: bytes, signature: str | None) -> bool:
     if not signature or not signature.startswith("sha256="):
         return False
-    expected = hmac.new(
-        get_settings().meta_app_secret.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(signature.removeprefix("sha256="), expected)
+    settings = get_settings()
+    secrets = (settings.meta_app_secret, settings.instagram_app_secret)
+    supplied = signature.removeprefix("sha256=")
+    return any(
+        hmac.compare_digest(supplied, hmac.new(secret.encode(), body, hashlib.sha256).hexdigest())
+        for secret in secrets if secret
+    )
 
 
 def extract_messages(payload: dict[str, Any]) -> list[Incoming]:

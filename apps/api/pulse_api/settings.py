@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     pulse_web_origin: str = "http://localhost:3000"
     pulse_credential_key: str = ""
     meta_app_secret: str
+    instagram_app_secret: str = ""
     meta_verify_token: str
     meta_graph_version: str
     pulse_echo_mode: bool = False

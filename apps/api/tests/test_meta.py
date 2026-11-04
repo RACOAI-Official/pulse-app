@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+from types import SimpleNamespace
 
 from pulse_api.meta import extract_comments, extract_messages, verify_signature
 
@@ -10,6 +11,15 @@ def test_webhook_signature_rejects_tampering():
     assert verify_signature(body, signature)
     assert not verify_signature(body + b" ", signature)
     assert not verify_signature(body, "sha1=abc")
+
+
+def test_webhook_signature_accepts_instagram_app_secret(monkeypatch):
+    monkeypatch.setattr("pulse_api.meta.get_settings", lambda: SimpleNamespace(
+        meta_app_secret="facebook-secret", instagram_app_secret="instagram-secret"))
+    body = b'{"object":"instagram"}'
+    signature = "sha256=" + hmac.new(b"instagram-secret", body, hashlib.sha256).hexdigest()
+    assert verify_signature(body, signature)
+    assert not verify_signature(body + b" ", signature)
 
 
 def test_extract_three_channel_inbound_and_ignore_echo():
