@@ -27,7 +27,7 @@ export default function AuthCallback() {
   }
 
   return <main className="auth-screen callback-screen"><div className="auth-brand"><span className="brand-mark">P</span><span>pulse<span className="brand-dot">.</span></span></div>
-    <section className="auth-card"><div className="eyebrow">ACCOUNT ACCESS</div><h2>Set your password</h2>
+    <section className="auth-card"><h2>Set your password</h2>
       <p>Choose a password to finish your invitation or recovery.</p>
       {ready && <form onSubmit={submit}><label>New password<input type="password" minLength={8} required value={password} onChange={e => setPassword(e.target.value)} /></label><button type="submit" className="button primary wide">Continue to Pulse</button></form>}
       {notice && <div className="form-notice" role="status">{notice}</div>}</section>

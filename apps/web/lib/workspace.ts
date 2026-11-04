@@ -15,12 +15,13 @@ export function useWorkspace() {
   useEffect(() => {
     let active = true;
     supabase().auth.getSession().then(async ({ data }) => {
-      if (!data.session) { router.replace("/login"); return; }
+      if (!data.session) { window.sessionStorage.setItem("pulse-return", window.location.pathname + window.location.search); router.replace("/login"); return; }
       try {
         const rows = await api<TenantMembership[]>("/me/tenants");
         if (!active) return;
         setMemberships(rows);
-        const saved = window.localStorage.getItem("pulse-tenant");
+        const requested = new URLSearchParams(window.location.search).get("tenant_id");
+        const saved = requested || window.localStorage.getItem("pulse-tenant");
         setTenantIdState(rows.find(item => item.tenant_id === saved)?.tenant_id || rows[0]?.tenant_id || "");
       } catch (caught) {
         if (active) setError(caught instanceof Error ? caught.message : "Could not load your workspace");

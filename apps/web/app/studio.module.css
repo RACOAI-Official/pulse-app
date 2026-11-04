@@ -1,0 +1,125 @@
+/* Hallmark v2.0.0 | redesign: full app screens | palette: mint, cream, deep teal | type: Satoshi + Inter | signature: one clear work surface per screen */
+/* Critique: the old screens used many small dark cards and tracked labels; this pass gives each task a readable hierarchy. */
+.studio {
+  width: min(100%, 1440px);
+  margin-inline: auto;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.studio :global(h1), .studio :global(h2), .studio :global(h3) {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.studio :global(h1) { font-size: clamp(36px, 3.5vw, 52px); line-height: 1.08; }
+.studio :global(h2) { font-size: clamp(22px, 2vw, 28px); line-height: 1.16; }
+.studio :global(p), .studio :global(label), .studio :global(.settings-note) { font-size: 16px; line-height: 1.55; }
+.studio :global(input), .studio :global(textarea), .studio :global(select) { font-size: 16px; min-height: 48px; }
+.studio :global(.button) { font-size: 15px; min-height: 44px; }
+.studio :global(.eyebrow) { display: none; }
+.studio :global(.agent-heading), .studio :global(.settings-intro), .studio :global(.insights-heading), .studio :global(.commerce-heading) {
+  border: 0;
+  padding-block: 8px 24px;
+  margin-bottom: 24px;
+  align-items: center;
+}
+.studio :global(.agent-heading p), .studio :global(.settings-intro p), .studio :global(.insights-heading p), .studio :global(.commerce-heading p) {
+  max-width: 66ch;
+  font-size: 16px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.studio :global(.agent-page), .studio :global(.settings-page), .studio :global(.insights-page) { width: 100%; }
+.studio :global(.agent-grid) { grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); gap: 24px; }
+.studio :global(.agent-card), .studio :global(.settings-section), .studio :global(.insights-card), .studio :global(.commerce-card) {
+  border-radius: 22px;
+  padding: clamp(24px, 3vw, 36px);
+  background: var(--surface);
+  border-color: var(--line);
+}
+.studio :global(.agent-card-head), .studio :global(.settings-section-heading) { margin-bottom: 16px; }
+.studio :global(.agent-card-head svg), .studio :global(.settings-section-heading svg) { color: var(--lime); }
+.studio :global(.agent-card label), .studio :global(.agent-single), .studio :global(.agent-card input), .studio :global(.agent-card textarea), .studio :global(.agent-card select) {
+  font-size: 15px;
+  font-weight: 500;
+}
+.studio :global(.agent-card input), .studio :global(.agent-card textarea), .studio :global(.agent-card select) { border-radius: 12px; }
+.studio :global(.agent-card input[type=checkbox]) { min-height: 0; width: 18px; height: 18px; margin-right: 8px; }
+.studio :global(.agent-card label:has(input[type=checkbox])) { display: flex; align-items: center; }
+.studio :global(.agent-help) { font-size: 14px; }
+.studio :global(.agent-entry) { grid-template-columns: minmax(160px, .6fr) minmax(0, 1.4fr) 36px; gap: 12px; }
+.studio :global(.agent-publish) { position: sticky; bottom: 0; z-index: 10; background: var(--bg); border-radius: 16px; padding: 16px; border: 1px solid var(--line); }
+.studio :global(.agent-publish span) { font-size: 14px; }
+.studio :global(.agent-preview) { border-radius: 22px; border-color: var(--line); box-shadow: none; }
+.studio :global(.preview-head) { background: var(--surface); }
+.studio :global(.preview-head strong) { font-size: 16px; }
+.studio :global(.preview-head span), .studio :global(.preview-foot) { font-size: 13px; }
+.studio :global(.preview-thread) { background: var(--surface-2); }
+.studio :global(.preview-bubble) { font-size: 15px; border-radius: 16px; }
+.studio :global(.preview-composer) { background: var(--surface); }
+.studio :global(.preview-empty strong) { font-size: 19px; }
+.studio :global(.preview-empty p) { font-size: 15px; }
+.studio :global(.settings-page) { padding-inline: clamp(24px, 4vw, 64px); }
+.studio :global(.settings-section) { margin-bottom: 16px; }
+.studio :global(.settings-section-heading) { align-items: center; }
+.studio :global(.channel-tile) { border-radius: 14px; }
+.studio :global(.channel-tile strong) { font-size: 16px; }
+.studio :global(.channel-tile p) { font-size: 14px; }
+.studio :global(.health-row) { min-height: 64px; padding-block: 16px; }
+.studio :global(.health-row span), .studio :global(.health-row strong) { font-size: 16px; }
+.studio :global(.insights-page) { padding-inline: clamp(24px, 4vw, 64px); }
+.studio :global(.metric-grid) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.studio :global(.metric-card) { border-radius: 20px; min-height: 164px; padding: 24px; }
+.studio :global(.metric-card:first-child) { background: var(--text); color: var(--surface); border-color: var(--text); }
+.studio :global(.metric-card:first-child .metric-card-top), .studio :global(.metric-card:first-child small), .studio :global(.metric-card:first-child svg) { color: var(--surface); }
+.studio :global(.metric-card-top) { font-size: 15px; }
+.studio :global(.metric-card > strong) { font-family: var(--font-display); font-size: clamp(28px, 3vw, 40px); }
+.studio :global(.metric-card > small) { font-size: 14px; }
+.studio :global(.insights-columns) { gap: 16px; }
+.studio :global(.insights-card) { min-height: 240px; }
+.studio :global(.insights-list-row) { font-size: 15px; min-height: 58px; align-items: center; }
+.studio :global(.insights-list-row span) { white-space: normal; text-align: right; }
+.studio :global(.insights-empty), .studio :global(.insights-note) { font-size: 15px; }
+.studio :global(.activity-chart) { height: 250px; }
+.studio :global(.activity-day small), .studio :global(.chart-legend) { font-size: 13px; }
+.period { display: grid; gap: 8px; color: var(--muted); font-size: 15px; }
+.performance { padding-inline: clamp(24px, 4vw, 64px); }
+.performance :global(.commerce-card) { padding: 0; overflow: hidden; }
+.tableHead { display: flex; justify-content: space-between; align-items: baseline; padding: 28px 32px 16px; gap: 20px; }
+.tableHead span { color: var(--muted); font-size: 15px; }
+.memberList { padding-inline: 32px; }
+.memberRow { display: grid; grid-template-columns: minmax(180px, 1.5fr) repeat(3, minmax(90px, 1fr)); gap: 20px; align-items: center; border-top: 1px solid var(--line); min-height: 86px; }
+.memberRow > strong { font-family: var(--font-display); font-size: 17px; overflow-wrap: anywhere; }
+.memberRow > div { display: grid; gap: 0; }
+.memberRow b { font-family: var(--font-display); font-size: 23px; line-height: 1.2; }
+.memberRow span { color: var(--muted); font-size: 14px; }
+.studio :global(:focus-visible) { outline: 3px solid var(--lime); outline-offset: 3px; }
+@media (max-width: 1100px) {
+  .studio :global(.agent-grid) { grid-template-columns: minmax(0, 1fr); }
+  .studio :global(.agent-preview) { position: static; height: 620px; }
+}
+@media (max-width: 860px) {
+  .studio :global(.metric-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .studio :global(.insights-columns) { grid-template-columns: minmax(0, 1fr); }
+  .studio :global(.insights-card.wide) { grid-column: auto; }
+}
+@media (max-width: 700px) {
+  .studio :global(.metric-grid) { grid-template-columns: minmax(0, 1fr); }
+  .studio :global(.agent-entry) { grid-template-columns: minmax(0, 1fr) 36px; }
+  .studio :global(.agent-entry textarea) { grid-column: 1; }
+  .studio :global(.agent-entry button) { grid-column: 2; grid-row: 1; }
+  .studio :global(.agent-pair) { grid-template-columns: minmax(0, 1fr); }
+  .memberRow { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-block: 16px; }
+  .memberRow > strong { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio :global(*), .studio :global(*::before), .studio :global(*::after) { animation-duration: 0.01ms; transition-duration: 0.01ms; }
+}
+
+.studio :global(h1), .studio :global(h2) { text-wrap: balance; }
+.studio :global(.button:active:not(:disabled)) { transform: translateY(1px); }
+.studio :global(button:disabled), .studio :global(input:disabled), .studio :global(textarea:disabled), .studio :global(select:disabled) { opacity: .55; cursor: not-allowed; }

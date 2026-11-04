@@ -61,6 +61,7 @@ export interface CommerceOrder {
   total_minor: number;
   paid_minor: number;
   refund_due_minor: number;
+  archived_at?: string | null;
   created_at: string;
   commerce_order_items?: OrderItem[];
   commerce_payments?: Payment[];

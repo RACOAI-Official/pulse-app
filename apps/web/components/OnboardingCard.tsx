@@ -20,5 +20,5 @@ export default function OnboardingCard({ tenantId }: { tenantId: string }) {
   useEffect(() => { api<Readiness>(`/tenants/${tenantId}/onboarding`).then(setReadiness).catch(() => {}); }, [tenantId]);
   if (!readiness) return null;
   const done = steps.filter(([key]) => readiness[key]).length;
-  return <section className="onboarding-card"><div><span className="eyebrow">YOUR PULSE SETUP</span><h2>{done} of {steps.length} steps complete</h2><p>Finish the sandbox checklist before enabling customer replies.</p></div><div className="onboarding-steps">{steps.map(([key, label, href]) => <Link href={href} key={key}><span className={readiness[key] ? "step-done" : ""}>{readiness[key] ? <Check size={17} weight="bold" /> : <Circle size={15} />}</span>{label}<span><ArrowRight size={16} /></span></Link>)}</div></section>;
+  return <section className="onboarding-card"><div><h2>{done} of {steps.length} steps complete</h2><p>Finish the sandbox checklist before enabling customer replies.</p></div><div className="onboarding-steps">{steps.map(([key, label, href]) => <Link href={href} key={key}><span className={readiness[key] ? "step-done" : ""}>{readiness[key] ? <Check size={17} weight="bold" /> : <Circle size={15} />}</span>{label}<span><ArrowRight size={16} /></span></Link>)}</div></section>;
 }
