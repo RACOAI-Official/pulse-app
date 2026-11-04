@@ -459,7 +459,7 @@ async def receive_webhook(request: Request) -> dict:
             "status": "eq.connected", "select": "id,tenant_id", "limit": "1",
         })
         if not connections:
-            logger.warning("Webhook for unconfigured %s account", item.channel)
+            logger.warning("Webhook for unconfigured %s account_id=%s", item.channel, item.account_id)
             continue
         connection = connections[0]
         events = await asyncio.to_thread(service_request, "POST", "webhook_events", params={
