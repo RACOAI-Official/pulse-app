@@ -8,10 +8,11 @@ from celery import Celery
 from cryptography.fernet import Fernet
 
 from .media import save_media
-from .agent import catalog_facts, config_for_tenant, generate_reply, recent_history
+from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali,
+                    order_confirmation, recent_history, resolve_order_items)
 from .meta import send_comment_reply, send_text
 from .settings import get_settings
-from .store import eq, service_headers, service_request
+from .store import StoreError, eq, service_headers, service_request
 
 logger = logging.getLogger(__name__)
 celery_app = Celery("pulse", broker=get_settings().redis_url)
@@ -140,9 +141,14 @@ def process_agent_job(job_id: str) -> None:
             prompt = "\n".join(row["body"] for row in rows if row.get("body"))
             if not prompt.strip():
                 raise ValueError("No text in agent job")
-            facts = catalog_facts(job["tenant_id"], prompt)
             history = recent_history(job["conversation_id"], job["first_at"])
+            # Search the whole recent thread so follow-ups ("yes", "L size, 3 pcs") keep product context.
+            context = "\n".join(item["content"] for item in history) + "\n" + prompt
+            facts = catalog_facts(job["tenant_id"], context)
             reply = generate_reply(config["published"], prompt, facts, history)
+            proposal = extract_order(reply)
+            if proposal:
+                reply, handoff = _place_agent_order(job, proposal, is_bengali(context))
         reply_id = service_request("POST", "rpc/pulse_complete_agent_job", body={
             "p_job_id": job_id, "p_body": reply, "p_handoff": handoff,
         })
@@ -166,6 +172,26 @@ def process_agent_job(job_id: str) -> None:
         except Exception:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
                             body={"status": "failed", "last_error": type(exc).__name__})
+
+
+def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, bool]:
+    """Create and confirm the order in the database; return the customer reply and handoff flag."""
+    try:
+        items = resolve_order_items(job["tenant_id"], proposal["items"])
+        result = service_request("POST", "rpc/pulse_agent_create_order", body={
+            "p_tenant_id": job["tenant_id"], "p_conversation_id": job["conversation_id"],
+            "p_agent_job_id": job["id"], "p_customer_name": proposal["customer_name"],
+            "p_customer_phone": proposal["customer_phone"],
+            "p_delivery_address": proposal["delivery_address"], "p_items": items,
+        })
+    except (LookupError, StoreError) as exc:
+        logger.warning("Agent order rejected for job %s: %s", job["id"], exc)
+        if bengali:
+            return ("দুঃখিত, এই মুহূর্তে অর্ডারটি সম্পন্ন করা যায়নি (পণ্য বা স্টক পরিবর্তিত হয়েছে)। "
+                    "আমাদের একজন টিম মেম্বার শীঘ্রই আপনাকে সাহায্য করবেন।"), True
+        return ("Sorry, I couldn't place that order right now (the item or stock has changed). "
+                "A team member will help you shortly."), True
+    return order_confirmation(result, bengali), False
 
 
 @celery_app.task(name="pulse.send_outbound")

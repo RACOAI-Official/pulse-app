@@ -85,3 +85,53 @@ async def test_private_test_uses_draft_and_marks_revision(monkeypatch):
     assert result["response"] == "Draft answer"
     assert result["tested_revision"] == 3
     assert seen == ["agent_test_runs", "rpc/pulse_mark_agent_tested"]
+
+
+def test_extract_order_parses_marker_and_rejects_bad_proposals():
+    reply = ('ORDER_CONFIRMED {"items":[{"sku":"TEE-BLK-L","quantity":3}],"customer_name":"Rahim",'
+             '"customer_phone":"01700000000","delivery_address":"Dhaka"}')
+    assert agent.extract_order(reply) == {"items": [{"sku": "TEE-BLK-L", "quantity": 3}],
+        "customer_name": "Rahim", "customer_phone": "01700000000", "delivery_address": "Dhaka"}
+    assert agent.extract_order("Total is 2,550 BDT. Shall I confirm?") is None
+    with pytest.raises(ValueError):
+        agent.extract_order('ORDER_CONFIRMED {"items":[{"sku":"X","quantity":0}],"customer_name":"A",'
+                            '"customer_phone":"1","delivery_address":"B"}')
+    with pytest.raises(ValueError):
+        agent.extract_order('ORDER_CONFIRMED {"items":[{"sku":"X","quantity":1}],"customer_name":"A"}')
+
+
+def test_place_agent_order_creates_confirmed_order(monkeypatch):
+    from pulse_api import tasks
+    calls = []
+
+    def fake_store(method, path, **kwargs):
+        calls.append((path, kwargs))
+        if path == "product_variants":
+            return [{"id": "variant-1", "sku": "TEE-BLK-L"}]
+        return {"order_id": "abcdef12-0000", "total_minor": 255000, "delivery_minor": 0,
+                "currency": "BDT", "existing": False,
+                "lines": [{"title": "Pulse Cotton Tee", "options": {"Color": "Black", "Size": "L"},
+                           "quantity": 3, "line_total_minor": 255000}]}
+    monkeypatch.setattr(agent, "service_request", fake_store)
+    monkeypatch.setattr(tasks, "service_request", fake_store)
+    job = {"id": "job-1", "tenant_id": "tenant-1", "conversation_id": "conv-1"}
+    proposal = {"items": [{"sku": "tee-blk-l", "quantity": 3}], "customer_name": "Rahim",
+                "customer_phone": "017", "delivery_address": "Dhaka"}
+    reply, handoff = tasks._place_agent_order(job, proposal, bengali=True)
+    assert not handoff
+    assert "#ABCDEF12" in reply and "2,550 BDT" in reply and "কনফার্ম" in reply
+    rpc = calls[-1]
+    assert rpc[0] == "rpc/pulse_agent_create_order"
+    assert rpc[1]["body"]["p_items"] == [{"variant_id": "variant-1", "quantity": 3}]
+    assert rpc[1]["body"]["p_agent_job_id"] == "job-1"
+    assert calls[0][1]["params"]["tenant_id"] == "eq.tenant-1"
+
+
+def test_place_agent_order_hands_off_on_unknown_sku(monkeypatch):
+    from pulse_api import tasks
+    monkeypatch.setattr(agent, "service_request", lambda *a, **k: [])
+    reply, handoff = tasks._place_agent_order(
+        {"id": "j", "tenant_id": "t", "conversation_id": "c"},
+        {"items": [{"sku": "NOPE", "quantity": 1}], "customer_name": "A",
+         "customer_phone": "1", "delivery_address": "B"}, bengali=False)
+    assert handoff and "team member" in reply
