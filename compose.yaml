@@ -5,7 +5,9 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
-    depends_on: [redis]
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:
@@ -14,7 +16,9 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
-    depends_on: [redis]
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   beat:
@@ -23,7 +27,9 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
-    depends_on: [redis]
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   web:
@@ -38,9 +44,37 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    command: redis-server --appendonly yes
+    # An unclean host shutdown can tear the AOF tail and leave Redis crash-looping,
+    # which silently stops every Celery job. Repair (or set aside) a bad AOF before start;
+    # Postgres stays authoritative and beat re-dispatches pending work.
+    entrypoint: ["/bin/sh", "/usr/local/bin/pulse-redis-start.sh"]
+    configs:
+      - source: redis_start
+        target: /usr/local/bin/pulse-redis-start.sh
     volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
   redis_data:
+
+configs:
+  redis_start:
+    content: |
+      #!/bin/sh
+      manifest=/data/appendonlydir/appendonly.aof.manifest
+      if [ -f "$$manifest" ] && ! redis-check-aof "$$manifest" >/dev/null 2>&1; then
+        echo "pulse: AOF failed check, attempting repair"
+        echo y | redis-check-aof --fix "$$manifest" || true
+        if ! redis-check-aof "$$manifest" >/dev/null 2>&1; then
+          aside="/data/appendonlydir.corrupt-$$(date +%Y%m%d%H%M%S)"
+          echo "pulse: AOF unrecoverable, moving to $$aside"
+          mv /data/appendonlydir "$$aside"
+        fi
+      fi
+      exec docker-entrypoint.sh redis-server --appendonly yes

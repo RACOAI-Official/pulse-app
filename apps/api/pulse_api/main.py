@@ -37,6 +37,15 @@ async def store_error_handler(_: Request, exc: StoreError):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    # Redis carries the Celery queue; without it no AI replies are sent, so report unhealthy.
+    client = aioredis.from_url(get_settings().redis_url, socket_connect_timeout=2, socket_timeout=2)
+    try:
+        await client.ping()
+    except Exception:
+        logger.exception("Health check: Redis unreachable")
+        raise HTTPException(503, "Redis unavailable")
+    finally:
+        await client.aclose()
     return {"status": "ok"}
 
 

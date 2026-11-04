@@ -15,6 +15,9 @@ from .store import eq, service_headers, service_request
 
 logger = logging.getLogger(__name__)
 celery_app = Celery("pulse", broker=get_settings().redis_url)
+# Never give up on the broker: after Redis outages the worker must resume on its own.
+celery_app.conf.broker_connection_retry_on_startup = True
+celery_app.conf.broker_connection_max_retries = None
 celery_app.conf.beat_schedule = {
     "reconcile-pending": {"task": "pulse.reconcile", "schedule": 30.0},
     "reconcile-agent": {"task": "pulse.reconcile_agent", "schedule": 2.0},
