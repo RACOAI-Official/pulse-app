@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .meta import extract_comments, extract_messages, verify_signature
-from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, generate_reply
+from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, extract_order, generate_reply
 from .settings import get_settings
 from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
 from .tasks import process_webhook, send_outbound
@@ -148,9 +148,17 @@ async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> 
     if not draft.get("business_name", "").strip():
         raise HTTPException(409, "Save a business name before testing")
     try:
-        facts = await asyncio.to_thread(catalog_facts, str(tenant_id), data.prompt)
-        answer = await asyncio.to_thread(generate_reply, draft, data.prompt, facts,
-                                         [turn.model_dump() for turn in data.history])
+        history = [turn.model_dump() for turn in data.history]
+        context = "\n".join(str(turn.get("content", "")) for turn in history) + "\n" + data.prompt
+        facts = await asyncio.to_thread(catalog_facts, str(tenant_id), context)
+        answer = await asyncio.to_thread(generate_reply, draft, data.prompt, facts, history)
+        proposal = extract_order(answer)
+        if proposal:
+            # Test runs never touch real orders or stock; show what would have been placed.
+            items = ", ".join(f"{item['sku']} x{item['quantity']}" for item in proposal["items"])
+            answer = (f"[Test mode: order would be created and confirmed] {items}; "
+                      f"{proposal['customer_name']}, {proposal['customer_phone']}, "
+                      f"{proposal['delivery_address']}")
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.warning("Agent test unavailable for tenant %s: %s", tenant_id, type(exc).__name__)
         raise HTTPException(503, "Local model unavailable. Check endpoint and model configuration") from exc
