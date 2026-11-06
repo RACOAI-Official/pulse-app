@@ -4,14 +4,13 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
-import { CommerceConfig, CommerceOrder, decimal, money, OrderState, Product, toMinor } from "@/lib/commerce";
+import { CommerceConfig, CommerceOrder, decimal, money, OrderState, Product, Shipment, toMinor } from "@/lib/commerce";
+import CourierPanel from "@/components/CourierPanel";
 
 type Draft = { id?: string; customer_name: string; customer_phone: string; delivery_address: string; discount_type: "none" | "amount" | "percent"; discount: string; delivery: string; items: { variant_id: string; quantity: number }[] };
 const emptyDraft = (): Draft => ({ customer_name: "", customer_phone: "", delivery_address: "", discount_type: "none", discount: "0", delivery: "0.00", items: [{ variant_id: "", quantity: 1 }] });
 const states: OrderState[] = ["draft", "pending_confirmation", "confirmed", "processing", "completed", "cancelled"];
 const labels: Record<OrderState, string> = { draft: "Draft", pending_confirmation: "Pending confirmation", confirmed: "Confirmed", processing: "Processing", completed: "Completed", cancelled: "Cancelled" };
-
-type Shipment = { id: string; state: string; cod_minor: number; tracking_code: string | null };
 
 function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
   const base = `/tenants/${tenantId}/commerce`;
@@ -20,7 +19,6 @@ function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
   const [orders, setOrders] = useState<CommerceOrder[]>([]);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [shipment, setShipment] = useState<Shipment | null>(null);
-  const [shipmentState, setShipmentState] = useState("picked_up");
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [selected, setSelected] = useState<CommerceOrder | null>(null);
@@ -46,11 +44,11 @@ function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
   useEffect(() => { refresh().catch(error => setNotice(error.message)); }, [refresh]);
   useEffect(() => {
     if (!selectedId) { setSelected(null); return; }
-    Promise.all([
-      api<CommerceOrder>(`${base}/orders/${selectedId}`),
-      api<Shipment[]>(`/tenants/${tenantId}/integrations/pathao/orders/${selectedId}`),
-    ]).then(([order, shipments]) => { setSelected(order); setShipment(shipments[0] || null); }).catch(error => setNotice(error.message));
-  }, [base, selectedId, orders, tenantId]);
+    api<CommerceOrder>(`${base}/orders/${selectedId}`).then(setSelected).catch(error => setNotice(error.message));
+    api<Shipment | null>(`${base}/orders/${selectedId}/shipment`)
+      .then(setShipment)
+      .catch(() => setShipment(null));
+  }, [base, selectedId, orders]);
   useEffect(() => { setShipment(null); }, [selectedId]);
   const choices = useMemo(() => products.filter(p => p.state === "active").flatMap(p => p.product_variants.filter(v => v.active).map(v => ({ ...v, product: p.title }))), [products]);
   const shown = orders.filter(order => filter === "all" || order.state === filter);
@@ -110,31 +108,6 @@ function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
       setSelected(null); setSelectedId("");
     });
   }
-  async function prepareShipment() {
-    if (!selected) return;
-    await run(async () => {
-      const prepared = await api<Shipment>(`/tenants/${tenantId}/integrations/pathao/orders/${selected.id}/prepare`, { method: "POST" });
-      setShipment(prepared);
-    });
-  }
-  async function recordBooking() {
-    if (!selected) return;
-    const externalId = window.prompt("Pathao consignment ID from the merchant panel?");
-    if (!externalId) return;
-    const trackingCode = window.prompt("Pathao tracking code?");
-    if (!trackingCode) return;
-    await run(async () => {
-      const booked = await api<Shipment>(`/tenants/${tenantId}/integrations/pathao/orders/${selected.id}/record-booking`, { method: "POST", body: JSON.stringify({ external_id: externalId, tracking_code: trackingCode }) });
-      setShipment(booked);
-    });
-  }
-  async function recordShipmentStatus() {
-    if (!selected) return;
-    await run(async () => {
-      const updated = await api<Shipment>(`/tenants/${tenantId}/integrations/pathao/orders/${selected.id}/status`, { method: "POST", body: JSON.stringify({ state: shipment?.state === "failed" ? "returned" : shipmentState }) });
-      setShipment(updated);
-    });
-  }
   const subtotal = draft?.items.reduce((total, line) => {
     const variant = choices.find(v => v.id === line.variant_id);
     return total + (variant?.offer_price_minor ?? variant?.regular_price_minor ?? 0) * line.quantity;
@@ -150,9 +123,9 @@ function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
           {draft.items.map((line, index) => <div className="commerce-inline order-line" key={index}><select aria-label={`Product variant ${index + 1}`} required value={line.variant_id} onChange={e => setDraft({ ...draft, items: draft.items.map((item, i) => i === index ? { ...item, variant_id: e.target.value } : item) })}><option value="">Select variant</option>{choices.map(v => <option key={v.id} value={v.id}>{v.product} / {v.sku}, {money(v.offer_price_minor ?? v.regular_price_minor, config?.currency || "BDT")}, {v.stock} in stock</option>)}</select><input aria-label={`Quantity ${index + 1}`} type="number" min="1" value={line.quantity} onChange={e => setDraft({ ...draft, items: draft.items.map((item, i) => i === index ? { ...item, quantity: Number(e.target.value) } : item) })} /><button type="button" className="button subtle" disabled={draft.items.length === 1} onClick={() => setDraft({ ...draft, items: draft.items.filter((_, i) => i !== index) })}>Remove</button></div>)}<button type="button" className="button subtle" onClick={() => setDraft({ ...draft, items: [...draft.items, { variant_id: "", quantity: 1 }] })}>Add item</button>
           <div className="commerce-form-grid order-totals"><label>Discount type<select value={draft.discount_type} onChange={e => setDraft({ ...draft, discount_type: e.target.value as Draft["discount_type"], discount: "0" })}><option value="none">None</option><option value="amount">Amount</option><option value="percent">Percent</option></select></label>{draft.discount_type !== "none" && <label>Discount {draft.discount_type === "percent" ? "%" : config?.currency}<input inputMode="decimal" value={draft.discount} onChange={e => setDraft({ ...draft, discount: e.target.value })} /></label>}<label>Delivery charge ({config?.currency})<input inputMode="decimal" value={draft.delivery} onChange={e => setDraft({ ...draft, delivery: e.target.value })} /></label></div><p className="commerce-preview">Current item subtotal: {money(subtotal, config?.currency || "BDT")}. Final prices and stock are checked when confirming.</p><div className="commerce-actions"><button className="button primary" disabled={busy}>Save draft</button></div></form></section>
         : selected ? <section className="commerce-card"><div className="commerce-section-head"><div><span className={`commerce-state ${selected.state}`}>{labels[selected.state]}</span><h2>Order {selected.id.slice(0, 8)}</h2><p>{new Date(selected.created_at).toLocaleString()}</p></div><button className="button subtle" onClick={() => refresh()}><RefreshCw size={15} /> Refresh</button></div><div className="order-customer"><strong>{selected.customer_name || "Unnamed draft"}</strong><span>{selected.customer_phone}</span><span>{selected.delivery_address}</span></div><h3>Items</h3>{selected.commerce_order_items?.map(item => <div className="order-summary-row" key={item.id}><span>{item.product_title}, {item.sku} × {item.quantity}</span><strong>{money(item.line_total_minor, selected.currency_code)}</strong></div>)}<div className="order-summary-row"><span>Subtotal</span><strong>{money(selected.subtotal_minor, selected.currency_code)}</strong></div><div className="order-summary-row"><span>Discount</span><strong>−{money(selected.discount_minor, selected.currency_code)}</strong></div><div className="order-summary-row"><span>Delivery</span><strong>{money(selected.delivery_minor, selected.currency_code)}</strong></div><div className="order-summary-row total"><span>Total</span><strong>{money(selected.total_minor, selected.currency_code)}</strong></div><div className="order-summary-row"><span>Paid</span><strong>{money(selected.paid_minor, selected.currency_code)}</strong></div>{selected.refund_due_minor > 0 && <p className="refund-notice">Refund due: {money(selected.refund_due_minor, selected.currency_code)}. Record the refund outside Pulse; payment history is retained.</p>}
-          <div className="commerce-actions">{selected.state === "draft" && <><button className="button subtle" onClick={() => editOrder(selected)}>Edit draft</button><button className="button primary" disabled={busy} onClick={() => action("submit")}>Submit for confirmation</button></>}{selected.state === "pending_confirmation" && <><button className="button subtle" disabled={busy} onClick={() => action("edit")}>Return to draft</button><button className="button primary" disabled={busy} onClick={() => action("confirm")}>Confirm & reserve stock</button></>}{selected.state === "confirmed" && <button className="button primary" disabled={busy} onClick={() => action("process")}>Start processing</button>}{selected.state === "processing" && <button className="button primary" disabled={busy} onClick={() => action("complete")}>Complete order</button>}{!["completed", "cancelled"].includes(selected.state) && <button className="button danger" disabled={busy || !!shipment && !["pending", "returned"].includes(shipment.state)} onClick={() => action("cancel")}>Cancel order</button>}</div>{shipment && !["pending", "returned"].includes(shipment.state) && <p>Resolve the courier return before cancelling this order or restoring its stock.</p>}
+          <div className="commerce-actions">{selected.state === "draft" && <><button className="button subtle" onClick={() => editOrder(selected)}>Edit draft</button><button className="button primary" disabled={busy} onClick={() => action("submit")}>Submit for confirmation</button></>}{selected.state === "pending_confirmation" && <><button className="button subtle" disabled={busy} onClick={() => action("edit")}>Return to draft</button><button className="button primary" disabled={busy} onClick={() => action("confirm")}>Confirm & reserve stock</button></>}{selected.state === "confirmed" && <button className="button primary" disabled={busy} onClick={() => action("process")}>Start processing</button>}{selected.state === "processing" && <button className="button primary" disabled={busy} onClick={() => action("complete")}>Complete order</button>}{!["completed", "cancelled"].includes(selected.state) && <button className="button danger" disabled={busy || !!shipment && !["pending", "returned"].includes(shipment.state)} onClick={() => action("cancel")}>Cancel order</button>}</div>{shipment && !["pending", "returned"].includes(shipment.state) && <p>This order is with a courier. Use Record return below instead of cancelling.</p>}
           {role !== "staff" && ["completed", "cancelled"].includes(selected.state) && <div className="commerce-actions"><button className="button subtle" disabled={busy} onClick={() => archive(!selected.archived_at)}>{selected.archived_at ? "Restore to queue" : "Archive order"}</button></div>}
-          <h3>Shipment</h3>{shipment ? <p>Pathao preparation: {shipment.state}. COD balance {money(shipment.cod_minor, selected.currency_code)}. {shipment.tracking_code ? `Tracking: ${shipment.tracking_code}` : "No courier booking or tracking yet."}</p> : <p>No shipment prepared.</p>}{role !== "staff" && ["confirmed", "processing"].includes(selected.state) && !shipment && <button className="button subtle" disabled={busy} onClick={prepareShipment}>Prepare Pathao shipment</button>}{role !== "staff" && shipment?.state === "pending" && <button className="button subtle" disabled={busy} onClick={recordBooking}>Record Pathao booking</button>}{role !== "staff" && shipment && !["pending", "delivered", "returned"].includes(shipment.state) && <div className="commerce-inline"><select aria-label="Pathao status from merchant panel" value={shipment.state === "failed" ? "returned" : shipmentState} onChange={event => setShipmentState(event.target.value)}>{(shipment.state === "failed" ? ["returned"] : ["picked_up", "in_transit", "delivered", "returned", "failed", "review"]).map(state => <option key={state} value={state}>{state.replaceAll("_", " ")}</option>)}</select><button className="button subtle" disabled={busy} onClick={recordShipmentStatus}>Record courier status</button></div>}
+          <CourierPanel key={selected.id} base={base} order={selected} role={role} shipment={shipment} busy={busy} run={run} onShipment={setShipment} />
           <h3>Customer payments</h3>{selected.commerce_payments?.map(item => <div className="order-summary-row" key={item.id}><span>{item.method}, {new Date(item.created_at).toLocaleString()} {item.note && `· ${item.note}`}</span><strong>{money(item.amount_minor, selected.currency_code)}</strong></div>)}{["confirmed", "processing", "completed"].includes(selected.state) && <form className="commerce-inline payment-form" onSubmit={recordPayment}><input aria-label="Payment amount" placeholder="Amount" inputMode="decimal" required value={payment.amount} onChange={e => setPayment({ ...payment, amount: e.target.value })} /><select aria-label="Payment method" value={payment.method} onChange={e => setPayment({ ...payment, method: e.target.value })}>{["cash", "bank", "card", "bkash", "nagad", "rocket", "other"].map(method => <option key={method}>{method}</option>)}</select><input aria-label="Payment note" placeholder="Note (optional)" value={payment.note} onChange={e => setPayment({ ...payment, note: e.target.value })} /><button className="button subtle" disabled={busy}>Record payment</button></form>}</section>
         : <section className="commerce-card commerce-empty">Choose an order or create a new one.</section>}
       </div></div>

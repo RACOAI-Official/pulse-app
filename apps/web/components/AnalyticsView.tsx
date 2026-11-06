@@ -7,6 +7,7 @@ import WorkspaceShell from "@/components/WorkspaceShell";
 import styles from "@/app/studio.module.css";
 import { api, ChannelConnection } from "@/lib/api";
 import OnboardingCard from "@/components/OnboardingCard";
+import CourierReturns from "@/components/CourierReturns";
 
 type Daily = { day: string; received: number; ai_replies: number; human_replies: number; orders: number; sales_minor: number };
 type Analytics = {
@@ -57,6 +58,7 @@ function AnalyticsContent({ tenantId, dashboard }: { tenantId: string; dashboard
         <section className="insights-card"><h2>Connected channels</h2>{(["messenger", "instagram", "whatsapp"] as const).map(channel => { const connection = channels.find(item => item.channel === channel); const count = data.channels.find(item => item.channel === channel)?.received || 0; return <div className="insights-list-row" key={channel}><strong>{channel === "messenger" ? "Facebook Messenger" : channel === "instagram" ? "Instagram" : "WhatsApp"}</strong><span>{connection?.status === "connected" ? `${count} received` : "Not connected"}</span></div>; })}<Link href="/integrations" className="text-button">Manage integrations</Link></section>
         <section className="insights-card"><h2>Top products</h2>{data.top_products.length ? data.top_products.map(item => <div className="insights-list-row" key={item.title}><strong>{item.title}</strong><span>{item.units} units</span></div>) : <p className="insights-empty">No confirmed product sales in this period.</p>}</section>
         <section className="insights-card"><h2>Top order customers</h2>{data.top_customers.length ? data.top_customers.map((item, index) => <div className="insights-list-row" key={index}><strong>{item.name}</strong><span>{money(item.sales_minor, data.currency)}</span></div>) : <p className="insights-empty">No confirmed customer orders in this period.</p>}</section>
+        {!dashboard && <CourierReturns tenantId={tenantId} days={days} />}
         <section className="insights-card"><h2>Daily orders and sales</h2>{data.daily.slice(-7).map(day => <div className="insights-list-row" key={day.day}><strong>{day.day}</strong><span>{day.orders} orders, {money(day.sales_minor, data.currency)}</span></div>)}</section>
       </div>
       <p className="insights-note">Customer counts across different channels are not merged without a verified shared identity. Sales reflect confirmed orders, not payments received.</p>

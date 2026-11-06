@@ -105,6 +105,32 @@ class PaymentInput(BaseModel):
     note: str = Field(default="", max_length=240)
 
 
+COURIERS = "^(pathao|steadfast|redx|paperfly|ecourier|sundarban|own_rider|other)$"
+
+
+class HandoffInput(BaseModel):
+    courier: str = Field(pattern=COURIERS)
+    courier_name: str | None = Field(default=None, max_length=80)
+    tracking_code: str | None = Field(default=None, max_length=100)
+    delivery_fee_minor: int | None = Field(default=None, ge=0)
+
+
+class CourierStatusInput(BaseModel):
+    state: str = Field(pattern="^(picked_up|in_transit|delivered|failed|review)$")
+
+
+class DamagedItem(BaseModel):
+    item_id: UUID
+    quantity: int = Field(gt=0)
+
+
+class ReturnInput(BaseModel):
+    damaged: list[DamagedItem] = Field(default_factory=list, max_length=100)
+    damage_loss_minor: int = Field(default=0, ge=0)
+    delivery_fee_minor: int | None = Field(default=None, ge=0)
+    note: str = Field(default="", max_length=500)
+
+
 @router.get("/config")
 async def config(tenant_id: UUID, auth: Session):
     await membership(tenant_id, auth[0])
@@ -306,9 +332,12 @@ async def csv_commit(tenant_id: UUID, data: CsvInput, auth: Session):
 
 
 @router.get("/orders")
-async def orders(tenant_id: UUID, auth: Session, state: str | None = None):
+async def orders(tenant_id: UUID, auth: Session, state: str | None = None,
+                 include_archived: bool = False):
     await membership(tenant_id, auth[0])
     params = {"tenant_id": eq(str(tenant_id)), "select": "*,commerce_payments(amount_minor)", "order": "created_at.desc", "limit": "200"}
+    if not include_archived:
+        params["archived_at"] = "is.null"
     if state:
         if state not in ("draft","pending_confirmation","confirmed","processing","completed","cancelled"):
             raise HTTPException(422, "Invalid state")
@@ -354,6 +383,62 @@ async def order_action(tenant_id: UUID, order_id: UUID, data: ActionInput, auth:
     await order_detail(tenant_id, order_id, auth)
     return await user_request("POST", "rpc/pulse_order_action", auth[0], body={
         "p_order_id": str(order_id), "p_action": data.action, "p_reason": data.reason,
+    })
+
+
+@router.post("/orders/{order_id}/archive")
+async def archive_order(tenant_id: UUID, order_id: UUID, archive: bool, auth: Session):
+    member = await membership(tenant_id, auth[0])
+    if member["role"] not in ("owner", "manager"):
+        raise HTTPException(403, "Order management access required")
+    return await user_request("POST", "rpc/pulse_archive_order", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_order_id": str(order_id),
+        "p_archive": archive,
+    })
+
+
+async def _shipment_manager(tenant_id: UUID, token: str) -> None:
+    member = await membership(tenant_id, token)
+    if member["role"] not in ("owner", "manager"):
+        raise HTTPException(403, "Shipment management access required")
+
+
+@router.get("/orders/{order_id}/shipment")
+async def order_shipment(tenant_id: UUID, order_id: UUID, auth: Session):
+    await membership(tenant_id, auth[0])
+    rows = await user_request("GET", "commerce_shipments", auth[0], params={
+        "tenant_id": eq(str(tenant_id)), "order_id": eq(str(order_id)),
+        "select": "*,commerce_shipment_return_items(order_item_id,damaged_quantity)", "limit": "1",
+    })
+    return rows[0] if rows else None
+
+
+@router.post("/orders/{order_id}/shipment")
+async def courier_handoff(tenant_id: UUID, order_id: UUID, data: HandoffInput, auth: Session):
+    await _shipment_manager(tenant_id, auth[0])
+    return await user_request("POST", "rpc/pulse_courier_handoff", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_order_id": str(order_id), "p_courier": data.courier,
+        "p_courier_name": data.courier_name, "p_tracking_code": data.tracking_code,
+        "p_delivery_fee_minor": data.delivery_fee_minor,
+    })
+
+
+@router.post("/orders/{order_id}/shipment/status")
+async def courier_status(tenant_id: UUID, order_id: UUID, data: CourierStatusInput, auth: Session):
+    await _shipment_manager(tenant_id, auth[0])
+    return await user_request("POST", "rpc/pulse_courier_status", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_order_id": str(order_id), "p_state": data.state,
+    })
+
+
+@router.post("/orders/{order_id}/shipment/return")
+async def courier_return(tenant_id: UUID, order_id: UUID, data: ReturnInput, auth: Session):
+    await _shipment_manager(tenant_id, auth[0])
+    return await user_request("POST", "rpc/pulse_courier_return", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_order_id": str(order_id),
+        "p_damaged": [{"item_id": str(item.item_id), "quantity": item.quantity} for item in data.damaged],
+        "p_damage_loss_minor": data.damage_loss_minor,
+        "p_delivery_fee_minor": data.delivery_fee_minor, "p_note": data.note,
     })
 
 
