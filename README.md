@@ -81,3 +81,14 @@ Open **Orders** to create a manual draft from active catalog variants. Submit it
 - Human sends are queued in Postgres. A timeout or worker death yields an **uncertain** state; staff must check the channel before sending again. Explicit retry is available only for known failures.
 - The inbox uses WebSocket refresh notifications with 15-second polling as fallback.
 - A daily worker task deletes private media after 30 days and message records after 365 days.
+
+## Supabase activity monitor
+
+Supabase may pause Free projects after a week with too little database activity. The VPS worker already queries the database while it runs. To keep making requests when the VPS is offline, configure an independent HTTP monitor after applying `20261107000100_supabase_heartbeat.sql` to the remote project:
+
+- Method and URL: `GET https://<project-ref>.supabase.co/rest/v1/rpc/pulse_heartbeat`
+- Header: `apikey: <Supabase publishable key>` (the same public key used by the web app; never use the service-role or secret key)
+- Schedule: every six hours, with a failure alert to the project owner
+- Success: HTTP 200 with JSON body `true`
+
+Run the monitor once manually and check its execution history. A missing or invalid API key should fail. A paused project needs to be resumed in the Supabase dashboard before the monitor can succeed. Free-plan activity reduces pause risk but does not guarantee exemption; a paid Supabase plan does. See [Supabase project pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
