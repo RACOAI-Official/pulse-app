@@ -56,3 +56,43 @@ async def test_commerce_requires_membership_before_store_request(monkeypatch):
         assert response.status_code == 404
     finally:
         main.app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_courier_return_is_manager_only_and_forwards_damage(monkeypatch):
+    order = "00000000-0000-0000-0000-0000000000aa"
+    item = "00000000-0000-0000-0000-0000000000bb"
+    calls = []
+    role = {"value": "staff"}
+
+    async def fake_session():
+        return ("token", {"id": "user"})
+
+    async def fake_membership(*_):
+        return {"role": role["value"]}
+
+    async def fake_store(method, path, token, **kwargs):
+        calls.append((path, kwargs.get("body")))
+        return {"state": "returned"}
+
+    main.app.dependency_overrides[main.session] = fake_session
+    monkeypatch.setattr(commerce, "membership", fake_membership)
+    monkeypatch.setattr(commerce, "user_request", fake_store)
+    body = {"damaged": [{"item_id": item, "quantity": 1}], "damage_loss_minor": 5000, "note": "Torn"}
+    url = f"/tenants/{TENANT}/commerce/orders/{order}/shipment/return"
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+            assert (await client.post(url, json=body)).status_code == 403
+            role["value"] = "manager"
+            assert (await client.post(url, json={**body, "damage_loss_minor": -1})).status_code == 422
+            bad_courier = await client.post(f"/tenants/{TENANT}/commerce/orders/{order}/shipment",
+                                            json={"courier": "dhl"})
+            assert bad_courier.status_code == 422
+            assert (await client.post(url, json=body)).status_code == 200
+    finally:
+        main.app.dependency_overrides.clear()
+    assert calls == [("rpc/pulse_courier_return", {
+        "p_tenant_id": str(TENANT), "p_order_id": order,
+        "p_damaged": [{"item_id": item, "quantity": 1}], "p_damage_loss_minor": 5000,
+        "p_delivery_fee_minor": None, "p_note": "Torn",
+    })]

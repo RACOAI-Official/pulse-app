@@ -77,3 +77,21 @@ export function toMinor(value: string) {
 }
 
 export function decimal(minor: number | null | undefined) { return minor == null ? "" : (minor / 100).toFixed(2); }
+
+export const couriers = { pathao: "Pathao", steadfast: "Steadfast", redx: "RedX", paperfly: "Paperfly", ecourier: "eCourier", sundarban: "Sundarban Courier", own_rider: "Own delivery rider", other: "Other" } as const;
+export type Courier = keyof typeof couriers;
+export const courierLabel = (courier: string, name?: string | null) => courier === "other" && name ? name : couriers[courier as Courier] || courier;
+
+export interface Shipment {
+  id: string;
+  provider: Courier;
+  courier_name: string | null;
+  tracking_code: string | null;
+  state: "pending" | "booked" | "picked_up" | "in_transit" | "delivered" | "returned" | "failed" | "review";
+  cod_minor: number;
+  delivery_fee_minor: number | null;
+  damage_loss_minor: number;
+  return_note: string | null;
+  returned_at: string | null;
+  commerce_shipment_return_items?: { order_item_id: string; damaged_quantity: number }[];
+}

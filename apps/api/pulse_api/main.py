@@ -265,6 +265,16 @@ async def analytics(tenant_id: UUID, auth: Session,
     })
 
 
+@app.get("/tenants/{tenant_id}/analytics/courier-returns")
+async def courier_returns(tenant_id: UUID, auth: Session, days: int = Query(30)) -> dict:
+    await membership(tenant_id, auth[0])
+    if days not in (7, 30, 90):
+        raise HTTPException(422, "Choose 7, 30, or 90 days")
+    return await user_request("POST", "rpc/pulse_courier_returns_report", auth[0], body={
+        "p_tenant_id": str(tenant_id), "p_days": days,
+    })
+
+
 @app.get("/tenants/{tenant_id}/performance")
 async def performance(tenant_id: UUID, auth: Session,
                       days: int = Query(7)) -> list[dict]:
@@ -556,7 +566,9 @@ async def websocket_updates(websocket: WebSocket, ticket: str = Query(...)) -> N
 from .commerce import router as commerce_router  # noqa: E402
 from .inbox_extra import router as inbox_extra_router  # noqa: E402
 from .admin_agent import router as admin_agent_router  # noqa: E402
+from .integrations import router as integrations_router  # noqa: E402
 
 app.include_router(commerce_router)
 app.include_router(inbox_extra_router)
 app.include_router(admin_agent_router)
+app.include_router(integrations_router)
