@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "@/components/icons";
+import { api } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
 
 export type Workspace = ReturnType<typeof useWorkspace>;
@@ -25,6 +26,17 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
   const workspace = useWorkspace();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [unseenOrders, setUnseenOrders] = useState(0);
+  const tenantId = workspace.tenantId;
+  useEffect(() => {
+    if (!tenantId) return;
+    let alive = true;
+    const load = () => api<{ count: number }>(`/tenants/${tenantId}/commerce/orders/unseen-count`).then(r => { if (alive) setUnseenOrders(r.count); }).catch(() => {});
+    load();
+    const timer = setInterval(load, 30000);
+    window.addEventListener("pulse:orders-seen", load);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener("pulse:orders-seen", load); };
+  }, [tenantId]);
   if (workspace.loading) return <main className="loading-screen"><span className="brand-mark">P</span><p>Opening workspace…</p></main>;
   if (workspace.error) return <main className="loading-screen"><span className="brand-mark">P</span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
 
@@ -35,7 +47,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
       <Link href="/dashboard" className="rail-brand" onClick={() => setOpen(false)} aria-label="Pulse dashboard"><span className="rail-brand-mark">P</span><strong>Pulse</strong></Link>
       <nav id="workspace-navigation" aria-label="Main navigation">{sections.map(section => <div className="nav-section" key={section.label}>
         <div className="nav-section-label">{section.label}</div>
-        {section.items.map(item => { const Icon = item.icon; const active = pathname === item.href; return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`rail-link ${active ? "active" : ""}`}><Icon size={17} weight={active ? "fill" : "regular"} /><span>{item.label}</span></Link>; })}
+        {section.items.map(item => { const Icon = item.icon; const active = pathname === item.href; return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`rail-link ${active ? "active" : ""}`}><Icon size={17} weight={active ? "fill" : "regular"} /><span>{item.label}</span>{item.href === "/orders" && unseenOrders > 0 && <b className="rail-badge" aria-label={`${unseenOrders} new AI orders`}>{unseenOrders > 99 ? "99+" : unseenOrders}</b>}</Link>; })}
       </div>)}</nav>
       <div className="rail-account"><div className="rail-account-identity"><span className="rail-account-avatar" aria-hidden="true">{workspace.current?.tenants.name?.charAt(0).toUpperCase() || "P"}</span><div className="rail-account-copy"><strong title={workspace.current?.tenants.name || "Workspace"}>{workspace.current?.tenants.name || "Workspace"}</strong><span>{workspace.current?.role || "Member"}</span></div></div><button className="rail-link rail-exit" onClick={workspace.signOut}><LogOut size={18} /><span>Sign out</span></button></div>
     </aside>

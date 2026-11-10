@@ -68,14 +68,19 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
     if (channel !== "all") params.set("channel", channel);
     if (state !== "all") params.set("state", state);
     try {
-      const rows = await api<Conversation[]>(`/tenants/${tenantId}/conversations?${params}`);
+      let rows = await api<Conversation[]>(`/tenants/${tenantId}/conversations?${params}`);
+      // A deep-linked chat (e.g. from an order) may be older than the latest 100; load it directly.
+      if (focusId && !params.toString() && !rows.some(item => item.id === focusId)) {
+        const focused = await api<Conversation>(`/tenants/${tenantId}/conversations/${focusId}`).catch(() => null);
+        if (focused) rows = [focused, ...rows];
+      }
       if (request !== conversationRequest.current) return;
       setConversations(rows);
       setSelectedId(current => rows.some(item => item.id === current) ? current : rows[0]?.id || "");
       setError("");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not load inbox"); }
     finally { setLoading(false); }
-  }, [tenantId, query, channel, state]);
+  }, [tenantId, focusId, query, channel, state]);
 
   const loadMessages = useCallback(async () => {
     const request = ++messageRequest.current;
@@ -215,6 +220,11 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
 function InboxWorkspace({ tenantId }: { tenantId: string }) {
   const [tab, setTab] = useState<"messages" | "orders" | "unreplied" | "tickets" | "comments">("messages");
   const [focusId, setFocusId] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("conversation_id");
+    if (params.get("tenant_id") === tenantId && id && /^[0-9a-f-]{36}$/i.test(id)) setFocusId(id);
+  }, [tenantId]);
   function openConversation(id: string) { setFocusId(id); setTab("messages"); }
   return <div className="inbox-page"><div className="inbox-primary-tabs" role="tablist" aria-label="Inbox sections">{(["messages", "orders", "unreplied", "tickets", "comments"] as const).map(item => <button key={item} role="tab" aria-selected={tab === item} className={tab === item ? "selected" : ""} onClick={() => setTab(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}</div>
     {tab === "messages" ? <InboxContent key={tenantId + focusId} tenantId={tenantId} focusId={focusId} /> : tab === "orders" ? <OrdersInbox tenantId={tenantId} /> : tab === "unreplied" ? <UnrepliedInbox tenantId={tenantId} openConversation={openConversation} /> : tab === "tickets" ? <TicketsInbox tenantId={tenantId} openConversation={openConversation} /> : <CommentsInbox tenantId={tenantId} />}
