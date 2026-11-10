@@ -1,9 +1,11 @@
 """Tenant-scoped commerce API. Database functions own all state-changing rules."""
 
+import asyncio
 import csv
 import hashlib
 import io
 import re
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -14,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from .main import Session, membership
 from .settings import get_settings
-from .store import eq, service_headers, storage_path, user_request
+from .store import eq, service_headers, service_request, storage_path, user_request
 
 router = APIRouter(prefix="/tenants/{tenant_id}/commerce", tags=["commerce"])
 
@@ -41,7 +43,7 @@ def _media(tenant_id: UUID, items: list[dict]) -> list[dict]:
 
 class VariantInput(BaseModel):
     id: UUID | None = None
-    sku: str = Field(min_length=1, max_length=80)
+    sku: str = Field(default="", max_length=80)
     options: dict[str, str] = Field(default_factory=dict)
     regular_price_minor: int = Field(ge=0)
     offer_price_minor: int | None = Field(default=None, ge=0)
@@ -50,7 +52,7 @@ class VariantInput(BaseModel):
 
 class ProductInput(BaseModel):
     id: UUID | None = None
-    handle: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
+    handle: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     title: str = Field(min_length=1, max_length=160)
     category: str = Field(default="", max_length=100)
     description: str = Field(default="", max_length=5000)
@@ -167,17 +169,37 @@ async def products(tenant_id: UUID, auth: Session, q: str = Query("", max_length
             or needle in row["handle"].casefold()]
 
 
+def _auto_handle(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:55].strip("-") or "product"
+    return f"{slug}-{uuid4().hex[:8]}"
+
+
+async def _resolve_handle(tenant_id: UUID, data: "ProductInput", token: str) -> str:
+    if data.handle:
+        return data.handle
+    if data.id:
+        rows = await user_request("GET", "products", token, params={
+            "id": eq(str(data.id)), "tenant_id": eq(str(tenant_id)), "select": "handle", "limit": "1",
+        })
+        if rows:
+            return rows[0]["handle"]
+    return _auto_handle(data.title)
+
+
 @router.post("/products")
 async def save_product(tenant_id: UUID, data: ProductInput, auth: Session):
     await membership(tenant_id, auth[0])
     media = _media(tenant_id, data.media)
     if data.state == "active" and not media:
         raise HTTPException(422, "Active product needs an image")
+    for variant in data.variants:
+        variant.sku = variant.sku.strip() or f"P-{uuid4().hex[:8].upper()}"
     if len({v.sku.casefold() for v in data.variants}) != len(data.variants):
         raise HTTPException(422, "Duplicate variant SKU")
+    handle = await _resolve_handle(tenant_id, data, auth[0])
     result = await user_request("POST", "rpc/pulse_save_product", auth[0], body={
         "p_tenant_id": str(tenant_id), "p_id": str(data.id) if data.id else None,
-        "p_handle": data.handle, "p_title": data.title, "p_category": data.category,
+        "p_handle": handle, "p_title": data.title, "p_category": data.category,
         "p_description": data.description, "p_media": media,
         "p_delivery_minor": data.delivery_minor, "p_state": data.state,
         "p_variants": [v.model_dump(mode="json") for v in data.variants],
@@ -346,6 +368,17 @@ async def orders(tenant_id: UUID, auth: Session, state: str | None = None,
     return [_payment_totals(row) for row in rows]
 
 
+@router.get("/orders/unseen-count")
+async def unseen_agent_orders(tenant_id: UUID, auth: Session):
+    """AI-created orders nobody has opened yet, for the Orders nav badge."""
+    await membership(tenant_id, auth[0])
+    rows = await user_request("GET", "commerce_orders", auth[0], params={
+        "tenant_id": eq(str(tenant_id)), "source": "eq.agent", "seen_at": "is.null",
+        "archived_at": "is.null", "select": "id", "limit": "100",
+    })
+    return {"count": len(rows)}
+
+
 def _payment_totals(row: dict) -> dict:
     paid = sum(item["amount_minor"] for item in row.get("commerce_payments", []))
     row["paid_minor"] = paid
@@ -384,6 +417,15 @@ async def order_action(tenant_id: UUID, order_id: UUID, data: ActionInput, auth:
     return await user_request("POST", "rpc/pulse_order_action", auth[0], body={
         "p_order_id": str(order_id), "p_action": data.action, "p_reason": data.reason,
     })
+
+
+@router.post("/orders/{order_id}/seen")
+async def mark_order_seen(tenant_id: UUID, order_id: UUID, auth: Session):
+    await membership(tenant_id, auth[0])
+    rows = await asyncio.to_thread(service_request, "PATCH", "commerce_orders", params={
+        "id": eq(str(order_id)), "tenant_id": eq(str(tenant_id)), "seen_at": "is.null",
+    }, body={"seen_at": datetime.now(timezone.utc).isoformat()}, prefer="return=representation")
+    return {"seen": bool(rows)}
 
 
 @router.post("/orders/{order_id}/archive")

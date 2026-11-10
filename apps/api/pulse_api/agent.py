@@ -77,18 +77,34 @@ ORDER_MARKER = "ORDER_CONFIRMED"
 ORDER_RULES = (
     "ORDERS: You can place orders for products in CURRENT CATALOG. "
     "1) Identify the exact variant (its SKU) and quantity; quantity must not exceed stock. "
-    "2) Collect the customer's full name, phone number and full delivery address. "
+    "2) Collect the customer's full name, phone number and full delivery address. If KNOWN CUSTOMER "
+    "has them, do not ask again: show the saved name, phone and address in the summary and ask the "
+    "customer to confirm them or send new ones; use whatever the customer gives last. "
     "3) Send one summary: items with options and price, delivery charge, total, payment as per business "
     "policies (cash on delivery if none), and ask the customer to confirm. "
     "4) Only when the customer's latest message clearly agrees to that summary, reply with exactly one line "
     f'and nothing else: {ORDER_MARKER} {{"items":[{{"sku":"<SKU>","quantity":<n>}}],'
     '"customer_name":"<name>","customer_phone":"<phone>","delivery_address":"<address>"}. '
-    "The system then creates the order and sends the confirmation. Never write that line in any other "
+    "The system then records the order for the team to review and tells the customer. Never write that line in any other "
     "situation, and never claim yourself that an order was created, confirmed or paid. "
 )
 
 
-def _messages(config: dict, prompt: str, facts: list[dict], history: list[dict] | None) -> list[dict]:
+def _known_customer(profile: dict | None) -> str:
+    if not profile:
+        return ""
+    known = {key: (profile.get(field) or "").strip() for key, field in
+             (("name", "display_name"), ("phone", "phone"), ("delivery_address", "delivery_address"))}
+    if known["name"] == "Customer":
+        known["name"] = ""
+    known = {key: value for key, value in known.items() if value}
+    if not known.get("phone") and not known.get("delivery_address"):
+        return ""
+    return f"\nKNOWN CUSTOMER (saved from earlier orders): {json.dumps(known, ensure_ascii=False)}"
+
+
+def _messages(config: dict, prompt: str, facts: list[dict], history: list[dict] | None,
+              profile: dict | None = None) -> list[dict]:
     system = (
         "You are the customer support assistant for the business below. "
         "Use only the supplied business facts and CURRENT catalog facts for prices, stock, policies, "
@@ -103,6 +119,7 @@ def _messages(config: dict, prompt: str, facts: list[dict], history: list[dict] 
         "states a preference. Follow the customer's language when language is auto.\n"
         f"BUSINESS CONFIG: {json.dumps(config, ensure_ascii=False)}\n"
         f"CURRENT CATALOG: {json.dumps(facts, ensure_ascii=False)}"
+        + _known_customer(profile)
     )
     result = [{"role": "system", "content": system}]
     for item in (history or [])[-8:]:
@@ -112,7 +129,8 @@ def _messages(config: dict, prompt: str, facts: list[dict], history: list[dict] 
     return result
 
 
-def generate_reply(config: dict, prompt: str, facts: list[dict], history: list[dict] | None = None) -> str:
+def generate_reply(config: dict, prompt: str, facts: list[dict], history: list[dict] | None = None,
+                   profile: dict | None = None) -> str:
     settings = get_settings()
     if not settings.pulse_llm_chat_url or not settings.pulse_llm_model:
         raise RuntimeError("Local model endpoint is not configured")
@@ -123,7 +141,7 @@ def generate_reply(config: dict, prompt: str, facts: list[dict], history: list[d
         headers["Authorization"] = f"Bearer {settings.pulse_llm_api_key}"
     payload = {
             "model": settings.pulse_llm_model,
-            "messages": _messages(config, prompt, facts, history),
+            "messages": _messages(config, prompt, facts, history, profile),
             "temperature": 0.2,
             "max_tokens": 450,
             "stream": False,
@@ -215,10 +233,10 @@ def order_confirmation(result: dict, bengali: bool) -> str:
     delivery = _money(result["delivery_minor"], currency)
     total = _money(result["total_minor"], currency)
     if bengali:
-        return (f"✅ আপনার অর্ডার কনফার্ম হয়েছে! অর্ডার নম্বর: #{number}\n" + "\n".join(lines) +
-                f"\nডেলিভারি চার্জ: {delivery}\nমোট: {total}\nআমাদের টিম শীঘ্রই ডেলিভারির জন্য যোগাযোগ করবে। ধন্যবাদ!")
-    return (f"✅ Your order is confirmed! Order number: #{number}\n" + "\n".join(lines) +
-            f"\nDelivery: {delivery}\nTotal: {total}\nOur team will contact you about delivery. Thank you!")
+        return (f"✅ ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে, আমরা শীঘ্রই কনফার্ম করব। অর্ডার নম্বর: #{number}\n" +
+                "\n".join(lines) + f"\nডেলিভারি চার্জ: {delivery}\nমোট: {total}")
+    return (f"✅ Thanks! Your order has been received and we'll confirm it shortly. Order number: #{number}\n" +
+            "\n".join(lines) + f"\nDelivery: {delivery}\nTotal: {total}")
 
 
 def is_bengali(text: str) -> bool:

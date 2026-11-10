@@ -96,3 +96,43 @@ async def test_courier_return_is_manager_only_and_forwards_damage(monkeypatch):
         "p_damaged": [{"item_id": item, "quantity": 1}], "p_damage_loss_minor": 5000,
         "p_delivery_fee_minor": None, "p_note": "Torn",
     })]
+
+
+@pytest.mark.asyncio
+async def test_save_product_generates_handle_and_sku(monkeypatch):
+    sent = {}
+
+    async def allow(*_):
+        return {"role": "owner"}
+
+    async def fake_store(method, path, token, **kwargs):
+        sent["body"] = kwargs["body"]
+        return "product-1"
+
+    monkeypatch.setattr(commerce, "membership", allow)
+    monkeypatch.setattr(commerce, "user_request", fake_store)
+    data = commerce.ProductInput(title="Cotton Tee!", media=[{"path": f"{TENANT}/abc"}],
+                                 state="active", variants=[{"regular_price_minor": 1000, "stock": 5}])
+    await commerce.save_product(TENANT, data, ("token", {"id": "u"}))
+    assert sent["body"]["p_handle"].startswith("cotton-tee-")
+    assert sent["body"]["p_variants"][0]["sku"].startswith("P-")
+
+
+@pytest.mark.asyncio
+async def test_save_product_keeps_existing_handle_on_edit(monkeypatch):
+    calls = []
+
+    async def allow(*_):
+        return {"role": "owner"}
+
+    async def fake_store(method, path, token, **kwargs):
+        calls.append((method, path, kwargs))
+        return [{"handle": "old-handle"}] if method == "GET" else "product-1"
+
+    monkeypatch.setattr(commerce, "membership", allow)
+    monkeypatch.setattr(commerce, "user_request", fake_store)
+    data = commerce.ProductInput(id=UUID("00000000-0000-0000-0000-0000000000aa"), title="Renamed",
+                                 variants=[{"sku": "KEEP-1", "regular_price_minor": 1000}])
+    await commerce.save_product(TENANT, data, ("token", {"id": "u"}))
+    body = calls[-1][2]["body"]
+    assert body["p_handle"] == "old-handle" and body["p_variants"][0]["sku"] == "KEEP-1"

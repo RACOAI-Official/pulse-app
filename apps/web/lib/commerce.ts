@@ -62,6 +62,10 @@ export interface CommerceOrder {
   paid_minor: number;
   refund_due_minor: number;
   archived_at?: string | null;
+  conversation_id?: string | null;
+  customer_id?: string | null;
+  source?: "staff" | "agent";
+  seen_at?: string | null;
   created_at: string;
   commerce_order_items?: OrderItem[];
   commerce_payments?: Payment[];

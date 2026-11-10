@@ -156,7 +156,7 @@ async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> 
         if proposal:
             # Test runs never touch real orders or stock; show what would have been placed.
             items = ", ".join(f"{item['sku']} x{item['quantity']}" for item in proposal["items"])
-            answer = (f"[Test mode: order would be created and confirmed] {items}; "
+            answer = (f"[Test mode: draft order would be created] {items}; "
                       f"{proposal['customer_name']}, {proposal['customer_phone']}, "
                       f"{proposal['delivery_address']}")
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
@@ -326,6 +326,11 @@ async def conversation_for_user(tenant_id: UUID, conversation_id: UUID, token: s
     if not rows:
         raise HTTPException(404, "Conversation not found")
     return rows[0]
+
+
+@app.get("/tenants/{tenant_id}/conversations/{conversation_id}")
+async def conversation(tenant_id: UUID, conversation_id: UUID, auth: Session) -> dict:
+    return await conversation_for_user(tenant_id, conversation_id, auth[0])
 
 
 @app.get("/tenants/{tenant_id}/conversations/{conversation_id}/messages")

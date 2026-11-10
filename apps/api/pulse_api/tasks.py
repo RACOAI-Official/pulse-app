@@ -145,7 +145,8 @@ def process_agent_job(job_id: str) -> None:
             # Search the whole recent thread so follow-ups ("yes", "L size, 3 pcs") keep product context.
             context = "\n".join(item["content"] for item in history) + "\n" + prompt
             facts = catalog_facts(job["tenant_id"], context)
-            reply = generate_reply(config["published"], prompt, facts, history)
+            profile = _customer_profile(job["conversation_id"])
+            reply = generate_reply(config["published"], prompt, facts, history, profile)
             proposal = extract_order(reply)
             if proposal:
                 reply, handoff = _place_agent_order(job, proposal, is_bengali(context))
@@ -174,8 +175,21 @@ def process_agent_job(job_id: str) -> None:
                             body={"status": "failed", "last_error": type(exc).__name__})
 
 
+def _customer_profile(conversation_id: str) -> dict | None:
+    """Saved name/phone/address for this conversation's customer, so the AI doesn't ask again."""
+    try:
+        rows = service_request("GET", "conversations", params={
+            "id": eq(conversation_id),
+            "select": "customer_profiles(display_name,phone,delivery_address)", "limit": "1",
+        })
+    except StoreError:
+        logger.warning("Could not load customer profile for %s", conversation_id)
+        return None
+    return (rows[0].get("customer_profiles") if rows else None) or None
+
+
 def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, bool]:
-    """Create and confirm the order in the database; return the customer reply and handoff flag."""
+    """Create a draft order for the team to review; return the customer reply and handoff flag."""
     try:
         items = resolve_order_items(job["tenant_id"], proposal["items"])
         result = service_request("POST", "rpc/pulse_agent_create_order", body={
@@ -187,9 +201,9 @@ def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, b
     except (LookupError, StoreError) as exc:
         logger.warning("Agent order rejected for job %s: %s", job["id"], exc)
         if bengali:
-            return ("দুঃখিত, এই মুহূর্তে অর্ডারটি সম্পন্ন করা যায়নি (পণ্য বা স্টক পরিবর্তিত হয়েছে)। "
+            return ("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যায়নি (পণ্যটি পরিবর্তিত হয়েছে)। "
                     "আমাদের একজন টিম মেম্বার শীঘ্রই আপনাকে সাহায্য করবেন।"), True
-        return ("Sorry, I couldn't place that order right now (the item or stock has changed). "
+        return ("Sorry, I couldn't take that order right now (the item has changed). "
                 "A team member will help you shortly."), True
     return order_confirmation(result, bengali), False
 
