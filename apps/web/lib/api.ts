@@ -3,8 +3,10 @@ import { supabase } from "./supabase";
 export interface TenantMembership {
   tenant_id: string;
   role: "owner" | "manager" | "staff";
-  tenants: { id: string; name: string };
+  tenants: { id: string; name: string; onboarding_step?: OnboardingStep; onboarding_completed_at?: string | null };
 }
+
+export type OnboardingStep = "business" | "ai" | "delivery" | "plan" | "integrations" | "inbox" | "done";
 
 export interface ChannelConnection {
   id: string;

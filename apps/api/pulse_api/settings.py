@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     instagram_app_secret: str = ""
     meta_verify_token: str
     meta_graph_version: str
+    # Self-serve channel connect (Facebook Login for Business, Instagram Login, WhatsApp Embedded Signup).
+    meta_app_id: str = ""
+    meta_login_config_id: str = ""
+    meta_whatsapp_config_id: str = ""
+    instagram_app_id: str = ""
     pulse_echo_mode: bool = False
     pulse_llm_chat_url: str = ""
     pulse_llm_model: str = ""

@@ -44,7 +44,7 @@ export default function Signup() {
       await publicApi("/auth/signup/verify", { email, code, password });
       const { error } = await supabase().auth.signInWithPassword({ email, password });
       if (error) throw error;
-      router.replace("/dashboard");
+      router.replace("/onboarding");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Sign-up failed");
       setBusy(false);

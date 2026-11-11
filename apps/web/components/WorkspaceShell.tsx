@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "@/components/icons";
 import { api } from "@/lib/api";
@@ -25,6 +25,12 @@ const titles = Object.fromEntries(sections.flatMap(section => section.items.map(
 export default function WorkspaceShell({ children }: { children: (workspace: Workspace) => React.ReactNode }) {
   const workspace = useWorkspace();
   const pathname = usePathname();
+  const router = useRouter();
+  const setupPending = !!workspace.current && (workspace.current.tenants.onboarding_step ?? "done") !== "done";
+  const isOwner = workspace.current?.role === "owner";
+  useEffect(() => {
+    if (setupPending && isOwner) router.replace("/onboarding");
+  }, [setupPending, isOwner, router]);
   const [open, setOpen] = useState(false);
   const [unseenOrders, setUnseenOrders] = useState(0);
   const tenantId = workspace.tenantId;
@@ -38,6 +44,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
     return () => { alive = false; clearInterval(timer); window.removeEventListener("pulse:orders-seen", load); };
   }, [tenantId]);
   if (workspace.loading) return <main className="loading-screen"><span className="brand-mark">P</span><p>Opening workspace…</p></main>;
+  if (setupPending && isOwner) return <main className="loading-screen"><span className="brand-mark">P</span><p>Finishing your setup…</p></main>;
   if (workspace.error) return <main className="loading-screen"><span className="brand-mark">P</span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
 
   return <div className="workspace">
@@ -56,7 +63,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
         <div className="workspace-title"><span>Pulse workspace</span><strong>{titles[pathname] || "Pulse"}</strong></div>
         <div className="topbar-actions"><label className="workspace-select"><span>Business</span><select aria-label="Business workspace" value={workspace.tenantId} onChange={e => workspace.setTenantId(e.target.value)}>{workspace.memberships.map(item => <option key={item.tenant_id} value={item.tenant_id}>{item.tenants.name}</option>)}</select><ChevronDown size={15} /></label><span className="operator-avatar" title={workspace.current?.role || "Member"}>{workspace.current?.tenants.name?.charAt(0).toUpperCase() || "P"}</span></div>
       </header>
-      {workspace.tenantId ? children(workspace) : <section className="empty-workspace"><h2>No workspace yet</h2><p>An operator needs to create your first Pulse workspace and invite you.</p></section>}
+      {setupPending ? <section className="empty-workspace"><h2>Workspace setup in progress</h2><p>The owner of {workspace.current?.tenants.name || "this business"} is still finishing onboarding. Check back soon.</p></section> : workspace.tenantId ? children(workspace) : <section className="empty-workspace"><h2>No workspace yet</h2><p>An operator needs to create your first Pulse workspace and invite you.</p></section>}
     </div>
   </div>;
 }

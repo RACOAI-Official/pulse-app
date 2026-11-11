@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 
 from .media import save_media
 from . import vision
-from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali,
+from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali, with_delivery,
                     order_confirmation, product_facts, recent_history, resolve_order_items)
 from .meta import send_comment_reply, send_text
 from .settings import get_settings
@@ -27,6 +27,7 @@ celery_app.conf.beat_schedule = {
     "reconcile-billing": {"task": "pulse.reconcile_billing", "schedule": 3600.0},
     "roll-credit-cycles": {"task": "pulse.roll_credit_cycles", "schedule": 900.0},
     "index-product-images": {"task": "pulse.index_pending_product_images", "schedule": 300.0},
+    "refresh-instagram-tokens": {"task": "pulse.refresh_instagram_tokens", "schedule": 86400.0},
 }
 
 
@@ -34,6 +35,12 @@ celery_app.conf.beat_schedule = {
 def reconcile_billing() -> None:
     from .billing import reconcile
     reconcile()
+
+
+@celery_app.task(name="pulse.refresh_instagram_tokens")
+def refresh_instagram_tokens() -> None:
+    from .meta_oauth import refresh_instagram_tokens as refresh
+    logger.info("Refreshed %s Instagram tokens", refresh())
 
 
 @celery_app.task(name="pulse.roll_credit_cycles")
@@ -182,7 +189,7 @@ def process_agent_job(job_id: str) -> None:
                 _handoff_ticket(job["tenant_id"], job["conversation_id"])
                 return
             charged = True
-            reply = generate_reply(config["published"], prompt, facts, history, profile)
+            reply = generate_reply(with_delivery(config["published"], job["tenant_id"]), prompt, facts, history, profile)
             charged = False  # The model answered; the credit is spent even if delivery fails later.
             proposal = extract_order(reply)
             if proposal:
@@ -286,6 +293,12 @@ def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, b
             "p_customer_phone": proposal["customer_phone"],
             "p_delivery_address": proposal["delivery_address"], "p_items": items,
         })
+        if proposal.get("delivery_zone") and not result.get("existing"):
+            priced = service_request("POST", "rpc/pulse_agent_apply_delivery_zone", body={
+                "p_tenant_id": job["tenant_id"], "p_order_id": result["order_id"],
+                "p_zone": proposal["delivery_zone"],
+            })
+            result = {**result, **priced}
     except (LookupError, StoreError) as exc:
         logger.warning("Agent order rejected for job %s: %s", job["id"], exc)
         if bengali:

@@ -77,6 +77,7 @@ async def test_private_test_uses_draft_and_marks_revision(monkeypatch):
         return "Draft answer"
     monkeypatch.setattr(main, "membership", fake_membership)
     monkeypatch.setattr(main, "user_request", fake_request)
+    monkeypatch.setattr(main, "with_delivery", lambda config, _: config)
     monkeypatch.setattr(main, "config_for_tenant", fake_config)
     monkeypatch.setattr(main, "catalog_facts", lambda *args: [])
     monkeypatch.setattr(main, "generate_reply", fake_generate)
