@@ -23,7 +23,21 @@ celery_app.conf.beat_schedule = {
     "reconcile-pending": {"task": "pulse.reconcile", "schedule": 30.0},
     "reconcile-agent": {"task": "pulse.reconcile_agent", "schedule": 2.0},
     "purge-retention": {"task": "pulse.purge_retention", "schedule": 86400.0},
+    "reconcile-billing": {"task": "pulse.reconcile_billing", "schedule": 3600.0},
+    "roll-credit-cycles": {"task": "pulse.roll_credit_cycles", "schedule": 900.0},
 }
+
+
+@celery_app.task(name="pulse.reconcile_billing")
+def reconcile_billing() -> None:
+    from .billing import reconcile
+    reconcile()
+
+
+@celery_app.task(name="pulse.roll_credit_cycles")
+def roll_credit_cycles() -> None:
+    from .billing import roll_credit_cycles as roll
+    logger.info("Rolled %s credit cycles", roll())
 
 
 def _connection(connection_id: str) -> dict:
@@ -124,7 +138,14 @@ def process_agent_job(job_id: str) -> None:
     if not job:
         return
     handoff = job["kind"] == "media"
+    config: dict = {}
+    charged = False
     try:
+        from .billing import consume_credit, has_access
+        if not has_access(job["tenant_id"]):
+            service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
+                            body={"status": "cancelled"})
+            return
         config = config_for_tenant(job["tenant_id"])
         if not config["enabled"] or not config["published"]:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
@@ -146,7 +167,16 @@ def process_agent_job(job_id: str) -> None:
             context = "\n".join(item["content"] for item in history) + "\n" + prompt
             facts = catalog_facts(job["tenant_id"], context)
             profile = _customer_profile(job["conversation_id"])
+            # 1 credit = 1 AI reply. Out of credits: AI pauses and the team takes over.
+            if not consume_credit(job["tenant_id"], job_id):
+                logger.info("AI credits exhausted for tenant %s; job %s left for humans", job["tenant_id"], job_id)
+                service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
+                                body={"status": "cancelled"})
+                _handoff_ticket(job["tenant_id"], job["conversation_id"])
+                return
+            charged = True
             reply = generate_reply(config["published"], prompt, facts, history, profile)
+            charged = False  # The model answered; the credit is spent even if delivery fails later.
             proposal = extract_order(reply)
             if proposal:
                 reply, handoff = _place_agent_order(job, proposal, is_bengali(context))
@@ -160,6 +190,12 @@ def process_agent_job(job_id: str) -> None:
             _handoff_ticket(job["tenant_id"], job["conversation_id"])
     except Exception as exc:
         logger.exception("Agent job failed: %s", job_id)
+        if charged:  # The model call itself failed.
+            try:
+                from .billing import refund_credit
+                refund_credit(job["tenant_id"], job_id)
+            except Exception:
+                logger.exception("Credit refund failed for job %s", job_id)
         try:
             fallback = ((config.get("published") or {}).get("media_reply") or
                         "I am passing this to a team member who can help.")
@@ -214,6 +250,9 @@ def send_outbound(message_id: str) -> None:
     if not message:
         return
     try:
+        from .billing import has_access
+        if not has_access(message["tenant_id"]):
+            raise ValueError("Subscription expired")
         conversations = service_request("GET", "conversations", params={
             "id": eq(message["conversation_id"]), "select": "*", "limit": "1",
         })

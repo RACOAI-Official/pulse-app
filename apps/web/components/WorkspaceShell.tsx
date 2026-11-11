@@ -16,7 +16,7 @@ const sections = [
   { label: "Marketing", items: [{ label: "AdsFlow", href: "/features/adsflow", icon: Activity }, { label: "Creative Studio", href: "/features/creative-studio", icon: Megaphone }, { label: "Ad Launcher", href: "/features/ad-launcher", icon: Megaphone }, { label: "Broadcast", href: "/features/broadcast", icon: Megaphone }] },
   { label: "AI Training", items: [{ label: "AI Setup", href: "/agent", icon: Bot }, { label: "Train Content", href: "/training", icon: BookOpen }, { label: "Admin Agent", href: "/admin-agent", icon: MessageSquareText }] },
   { label: "Insights", items: [{ label: "Analytics", href: "/analytics", icon: BarChart3 }, { label: "Performance", href: "/performance", icon: Users }, { label: "Activity Log", href: "/activity-log", icon: Activity }, { label: "Chat Summary", href: "/features/chat-summary", icon: MessageSquareText }] },
-  { label: "Account", items: [{ label: "Billing", href: "/billing", icon: CreditCard }, { label: "Settings", href: "/settings", icon: Settings2 }] },
+  { label: "Account", items: [{ label: "Plan", href: "/plan", icon: CreditCard }, { label: "Settings", href: "/settings", icon: Settings2 }] },
   { label: "Help", items: [{ label: "Tutorials", href: "/features/tutorials", icon: BookOpen }, { label: "Support", href: "/features/support", icon: LifeBuoy }] },
 ] as const;
 

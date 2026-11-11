@@ -73,6 +73,22 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** Unauthenticated call (sign-up). Throws the API's error detail as the message. */
+export async function publicApi<T>(path: string, body: unknown): Promise<T> {
+  if (!apiBase) throw new Error("Pulse API URL is missing");
+  const response = await fetch(`${apiBase}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const detail = (await response.json()).detail;
+      if (typeof detail === "string") message = detail;
+      else if (Array.isArray(detail)) message = detail.map(item => String(item.msg || "Invalid input").replace(/^Value error, /, "")).join("; ");
+    } catch {}
+    throw new Error(message);
+  }
+  return response.json() as Promise<T>;
+}
+
 export function websocketBase(): string {
   if (!apiBase) throw new Error("Pulse API URL is missing");
   return apiBase.replace(/^http/, "ws");

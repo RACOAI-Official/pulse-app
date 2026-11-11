@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from dataclasses import asdict
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -9,6 +10,7 @@ import httpx
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .meta import extract_comments, extract_messages, verify_signature
@@ -26,6 +28,65 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "PUT"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+async def session(authorization: Annotated[str | None, Header()] = None) -> tuple[str, dict]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Authentication required")
+    token = authorization.removeprefix("Bearer ")
+    return token, await auth_user(token)
+
+
+Session = Annotated[tuple[str, dict], Depends(session)]
+
+
+async def membership(tenant_id: UUID, token: str) -> dict:
+    user = await auth_user(token)
+    rows = await user_request("GET", "memberships", token, params={
+        "tenant_id": eq(str(tenant_id)), "user_id": eq(user["id"]),
+        "select": "tenant_id,user_id,role", "limit": "1",
+    })
+    if not rows:
+        raise HTTPException(404, "Tenant not found")
+    return rows[0]
+
+
+async def owner(tenant_id: UUID, token: str) -> dict:
+    member = await membership(tenant_id, token)
+    if member["role"] != "owner":
+        raise HTTPException(403, "Owner role required")
+    return member
+
+
+@app.middleware("http")
+async def billing_access_gate(request: Request, call_next):
+    """Block paid writes when the workspace has no active plan or trial; Plan stays reachable."""
+    path = request.url.path
+    if request.method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/tenants/"):
+        match = re.match(r"^/tenants/([0-9a-fA-F-]{36})(?:/|$)", path)
+        if match:
+            try:
+                tenant_id = UUID(match.group(1))
+            except ValueError:
+                return await call_next(request)
+            if path.startswith(f"/tenants/{tenant_id}/billing/") or path == f"/tenants/{tenant_id}/billing":
+                return await call_next(request)
+            authorization = request.headers.get("authorization", "")
+            if not authorization.startswith("Bearer "):
+                return await call_next(request)
+            try:
+                await membership(tenant_id, authorization.removeprefix("Bearer "))
+            except HTTPException:
+                return await call_next(request)
+            except StoreError:
+                return JSONResponse(status_code=503, content={"detail": "Workspace access could not be checked."})
+            from .billing import has_access
+            try:
+                if not has_access(str(tenant_id)):
+                    return JSONResponse(status_code=402, content={"detail": "Subscription required. Open Plan to continue."})
+            except StoreError:
+                return JSONResponse(status_code=503, content={"detail": "Billing access could not be checked."})
+    return await call_next(request)
 
 
 @app.exception_handler(StoreError)
@@ -49,16 +110,6 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def session(authorization: Annotated[str | None, Header()] = None) -> tuple[str, dict]:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Authentication required")
-    token = authorization.removeprefix("Bearer ")
-    return token, await auth_user(token)
-
-
-Session = Annotated[tuple[str, dict], Depends(session)]
-
-
 @app.get("/ops/overview")
 async def ops_overview(auth: Session) -> dict:
     return await user_request("POST", "rpc/pulse_ops_overview", auth[0], body={})
@@ -70,24 +121,6 @@ def dispatch(task, item_id: str) -> None:
     except Exception:
         # The durable database record is authoritative; Celery beat reconciles it.
         logger.exception("Queue dispatch failed for persisted item %s", item_id)
-
-
-async def membership(tenant_id: UUID, token: str) -> dict:
-    user = await auth_user(token)
-    rows = await user_request("GET", "memberships", token, params={
-        "tenant_id": eq(str(tenant_id)), "user_id": eq(user["id"]),
-        "select": "tenant_id,user_id,role", "limit": "1",
-    })
-    if not rows:
-        raise HTTPException(404, "Tenant not found")
-    return rows[0]
-
-
-async def owner(tenant_id: UUID, token: str) -> dict:
-    member = await membership(tenant_id, token)
-    if member["role"] != "owner":
-        raise HTTPException(403, "Owner role required")
-    return member
 
 
 class AgentFact(BaseModel):
@@ -572,8 +605,13 @@ from .commerce import router as commerce_router  # noqa: E402
 from .inbox_extra import router as inbox_extra_router  # noqa: E402
 from .admin_agent import router as admin_agent_router  # noqa: E402
 from .integrations import router as integrations_router  # noqa: E402
+from .signup import router as signup_router  # noqa: E402
+from .billing import router as billing_router, webhooks as billing_webhooks  # noqa: E402
 
 app.include_router(commerce_router)
 app.include_router(inbox_extra_router)
 app.include_router(admin_agent_router)
 app.include_router(integrations_router)
+app.include_router(signup_router)
+app.include_router(billing_router)
+app.include_router(billing_webhooks)
