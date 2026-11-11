@@ -40,6 +40,7 @@ STRIPE_CURRENCIES = ("USD", "GBP")
 # Rough conversations/day each plan covers at ~8 AI replies per conversation.
 REPLIES_PER_CONVERSATION = 8
 RETURN_PATH = "/plan"
+RETURN_PATHS = {"plan": "/plan", "onboarding": "/onboarding"}
 
 
 class CheckoutInput(BaseModel):
@@ -53,6 +54,7 @@ class CheckoutInput(BaseModel):
     billing_address: str = Field(default="", max_length=200)
     billing_city: str = Field(default="", max_length=50)
     billing_postcode: str = Field(default="", max_length=10)
+    return_to: str = Field(default="plan", pattern="^(plan|onboarding)$")
 
 
 def provider_for(currency: str) -> str:
@@ -96,6 +98,16 @@ def credits(tenant_id: str) -> dict | None:
 
 def has_access(tenant_id: str) -> bool:
     return bool(service_request("POST", "rpc/pulse_billing_has_access", body={"p_tenant_id": tenant_id}))
+
+
+def paid_access(tenant_id: str) -> bool:
+    """True only for a paid, active plan; the free trial does not unlock integrations."""
+    return is_active(account(tenant_id))
+
+
+def require_paid(tenant_id: str) -> None:
+    if not paid_access(tenant_id):
+        raise HTTPException(402, "Integrations need Pro. Upgrade your plan to connect channels")
 
 
 def consume_credit(tenant_id: str, source_id: str) -> bool:
@@ -210,13 +222,14 @@ def ssl_session_status(session_id: str) -> dict:
 def ssl_session(checkout: dict, email: str, contact: dict) -> dict:
     settings = get_settings()
     callback = settings.pulse_api_public_url.rstrip("/") + "/webhooks/billing/sslcommerz"
+    back = "?return=1" + ("&to=onboarding" if checkout.get("return_path") == "/onboarding" else "")
     label = ("upgrade to Enterprise" if checkout["kind"] == "upgrade" else
              f"{NAMES[checkout['plan_key']]} {'yearly' if checkout['billing_interval'] == 'year' else 'monthly'} subscription")
     form = {"store_id": settings.pulse_ssl_store_id, "store_passwd": settings.pulse_ssl_store_passwd,
             "total_amount": str((Decimal(checkout["amount_minor"]) / 100).quantize(Decimal("0.01"))), "currency": "BDT",
             "tran_id": checkout["merchant_transaction_id"],
-            "success_url": callback + "?return=1", "fail_url": callback + "?return=1",
-            "cancel_url": callback + "?return=1", "ipn_url": callback, "emi_option": "0",
+            "success_url": callback + back, "fail_url": callback + back,
+            "cancel_url": callback + back, "ipn_url": callback, "emi_option": "0",
             "cus_name": contact.get("billing_name") or "", "cus_email": email,
             "cus_add1": contact.get("billing_address") or "", "cus_phone": contact.get("billing_phone") or "",
             "cus_city": contact.get("billing_city") or "Dhaka", "cus_postcode": contact.get("billing_postcode") or "1000",
@@ -237,19 +250,20 @@ def ssl_session(checkout: dict, email: str, contact: dict) -> dict:
 
 
 def create_checkout(tenant: str, *, plan: str, interval: str, currency: str, kind: str,
-                    auto_renew: bool, amount: int) -> dict:
+                    auto_renew: bool, amount: int, return_path: str = RETURN_PATH) -> dict:
     return service_request("POST", "billing_checkouts", body={"tenant_id": tenant,
         "plan_key": plan, "billing_interval": interval, "provider": provider_for(currency), "kind": kind,
         "auto_renew": auto_renew, "amount_minor": amount, "currency_code": currency,
-        "merchant_transaction_id": uuid4().hex[:30]}, prefer="return=representation")[0]
+        "merchant_transaction_id": uuid4().hex[:30], "return_path": return_path}, prefer="return=representation")[0]
 
 
 def stripe_session(checkout: dict, customer_id: str) -> dict:
     settings = get_settings()
     price_id = stripe_price_id(checkout["plan_key"], checkout["billing_interval"], checkout["currency_code"])
+    back = settings.pulse_web_origin + (checkout.get("return_path") or RETURN_PATH)
     form = {"customer": customer_id, "mode": "subscription",
-            "success_url": settings.pulse_web_origin + RETURN_PATH + "?return=success",
-            "cancel_url": settings.pulse_web_origin + RETURN_PATH + "?return=cancel",
+            "success_url": back + "?return=success",
+            "cancel_url": back + "?return=cancel",
             "client_reference_id": checkout["id"], "metadata[checkout_id]": checkout["id"],
             "line_items[0][price]": price_id, "line_items[0][quantity]": "1",
             "subscription_data[metadata][tenant_id]": checkout["tenant_id"],
@@ -343,7 +357,8 @@ async def checkout(tenant_id: UUID, data: CheckoutInput, auth: Session):
     if not email:
         raise HTTPException(422, "Owner email is required for checkout")
     row = create_checkout(tenant, plan=data.plan, interval=data.interval, currency=data.currency,
-                          kind="purchase", auto_renew=auto_renew, amount=amount)
+                          kind="purchase", auto_renew=auto_renew, amount=amount,
+                          return_path=RETURN_PATHS[data.return_to])
     try:
         if provider == "stripe":
             customer_id = (current or {}).get("stripe_customer_id")
@@ -637,7 +652,8 @@ def validate_ssl_payment(checkout: dict, val_id: str) -> dict:
 @webhooks.post("/webhooks/billing/sslcommerz")
 async def ssl_webhook(request: Request):
     raw = await read_limited_body(request, 8192, "SSLCOMMERZ event is too large")
-    back = RedirectResponse(get_settings().pulse_web_origin + RETURN_PATH + "?return=check", status_code=303)
+    path = RETURN_PATHS.get(request.query_params.get("to", "plan"), RETURN_PATH)
+    back = RedirectResponse(get_settings().pulse_web_origin + path + "?return=check", status_code=303)
     try:
         fields = {key: values[0] for key, values in parse_qs(raw.decode(), keep_blank_values=True).items()}
     except UnicodeDecodeError as exc:

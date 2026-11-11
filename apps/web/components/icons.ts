@@ -49,4 +49,11 @@ export {
   Trash as Trash2,
   Users,
   X,
+  MessengerLogo,
+  InstagramLogo,
+  WhatsappLogo,
+  Truck,
+  Sparkle,
+  Storefront,
+  UserSwitch,
 } from "@phosphor-icons/react";

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .meta import extract_comments, extract_messages, verify_signature
-from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, extract_order, generate_reply
+from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, extract_order, generate_reply, with_delivery
 from .settings import get_settings
 from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
 from .tasks import process_webhook, send_outbound
@@ -25,7 +25,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().pulse_web_origin],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "PUT"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -69,7 +69,10 @@ async def billing_access_gate(request: Request, call_next):
                 tenant_id = UUID(match.group(1))
             except ValueError:
                 return await call_next(request)
-            if path.startswith(f"/tenants/{tenant_id}/billing/") or path == f"/tenants/{tenant_id}/billing":
+            # Plan and onboarding stay reachable so an owner can always finish setup or pay.
+            if (path.startswith(f"/tenants/{tenant_id}/billing/") or path == f"/tenants/{tenant_id}/billing"
+                    or path.startswith(f"/tenants/{tenant_id}/onboarding/")
+                    or path == f"/tenants/{tenant_id}/delivery"):
                 return await call_next(request)
             authorization = request.headers.get("authorization", "")
             if not authorization.startswith("Bearer "):
@@ -184,7 +187,8 @@ async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> 
         history = [turn.model_dump() for turn in data.history]
         context = "\n".join(str(turn.get("content", "")) for turn in history) + "\n" + data.prompt
         facts = await asyncio.to_thread(catalog_facts, str(tenant_id), context)
-        answer = await asyncio.to_thread(generate_reply, draft, data.prompt, facts, history)
+        config = await asyncio.to_thread(with_delivery, draft, str(tenant_id))
+        answer = await asyncio.to_thread(generate_reply, config, data.prompt, facts, history)
         proposal = extract_order(answer)
         if proposal:
             # Test runs never touch real orders or stock; show what would have been placed.
@@ -230,7 +234,8 @@ async def set_agent_enabled(tenant_id: UUID, data: EnabledRequest, auth: Session
 async def my_tenants(auth: Session) -> list[dict]:
     token, _ = auth
     rows = await user_request("GET", "memberships", token, params={
-        "select": "tenant_id,role,tenants(id,name)", "order": "created_at.asc",
+        "select": "tenant_id,role,tenants(id,name,onboarding_step,onboarding_completed_at)",
+        "order": "created_at.asc",
     })
     return rows
 
@@ -607,6 +612,8 @@ from .admin_agent import router as admin_agent_router  # noqa: E402
 from .integrations import router as integrations_router  # noqa: E402
 from .signup import router as signup_router  # noqa: E402
 from .billing import router as billing_router, webhooks as billing_webhooks  # noqa: E402
+from .onboarding import router as onboarding_router  # noqa: E402
+from .meta_oauth import router as meta_oauth_router, callbacks as meta_oauth_callbacks  # noqa: E402
 
 app.include_router(commerce_router)
 app.include_router(inbox_extra_router)
@@ -615,3 +622,6 @@ app.include_router(integrations_router)
 app.include_router(signup_router)
 app.include_router(billing_router)
 app.include_router(billing_webhooks)
+app.include_router(onboarding_router)
+app.include_router(meta_oauth_router)
+app.include_router(meta_oauth_callbacks)

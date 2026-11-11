@@ -42,6 +42,8 @@ async def integrations(tenant_id: UUID, auth: Session):
 @router.put("/{provider}")
 async def save_integration(tenant_id: UUID, provider: str, data: IntegrationInput, auth: Session):
     await owner(tenant_id, auth[0])
+    from .billing import require_paid
+    require_paid(str(tenant_id))
     required = {"pathao": {"client_id", "client_secret", "username", "password"}}
     if provider not in required or set(data.credentials) != required[provider] or any(
         not value.strip() for value in data.credentials.values()

@@ -41,6 +41,7 @@ def worker(monkeypatch):
     monkeypatch.setattr(tasks, "config_for_tenant", lambda _: {"enabled": True, "published": {"x": 1}})
     monkeypatch.setattr(tasks, "recent_history", lambda *_: [])
     monkeypatch.setattr(tasks, "catalog_facts", lambda *_: [])
+    monkeypatch.setattr(tasks, "with_delivery", lambda config, _: config)
     monkeypatch.setattr(tasks, "_customer_profile", lambda _: None)
     monkeypatch.setattr(tasks, "generate_reply", generate_reply)
     monkeypatch.setattr(tasks, "extract_order", lambda _: None)
