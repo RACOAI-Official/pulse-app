@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Mail, LockKeyhole } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
@@ -57,6 +58,7 @@ export default function Login() {
           <button type="submit" className="button primary wide" disabled={busy}>{busy ? "Please wait…" : reset ? "Send recovery link" : "Sign in"}<ArrowRight size={17} /></button>
         </form>
         <button className="text-button auth-switch" onClick={() => { setReset(!reset); setNotice(""); }}>{reset ? "Back to sign in" : "Forgot password?"}</button>
+        {!reset && <p className="auth-signup-link">New to Pulse? <Link href="/signup">Create an account</Link></p>}
       </section>
       <div className="login-doodle login-doodle-left" aria-hidden="true"><span className="doodle-speech"><i /><i /></span><span className="doodle-block" /></div>
       <div className="login-doodle login-doodle-right" aria-hidden="true"><span className="doodle-speech"><i /><i /></span></div>
