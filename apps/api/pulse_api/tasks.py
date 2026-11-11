@@ -8,8 +8,9 @@ from celery import Celery
 from cryptography.fernet import Fernet
 
 from .media import save_media
+from . import vision
 from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali,
-                    order_confirmation, recent_history, resolve_order_items)
+                    order_confirmation, product_facts, recent_history, resolve_order_items)
 from .meta import send_comment_reply, send_text
 from .settings import get_settings
 from .store import StoreError, eq, service_headers, service_request
@@ -25,6 +26,7 @@ celery_app.conf.beat_schedule = {
     "purge-retention": {"task": "pulse.purge_retention", "schedule": 86400.0},
     "reconcile-billing": {"task": "pulse.reconcile_billing", "schedule": 3600.0},
     "roll-credit-cycles": {"task": "pulse.roll_credit_cycles", "schedule": 900.0},
+    "index-product-images": {"task": "pulse.index_pending_product_images", "schedule": 300.0},
 }
 
 
@@ -151,6 +153,9 @@ def process_agent_job(job_id: str) -> None:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
                             body={"status": "cancelled"})
             return
+        photo_facts = _photo_matches(job) if handoff else None
+        if photo_facts:
+            handoff = False
         if handoff:
             reply = config["published"].get("media_reply") or "A teammate will help with your attachment."
         else:
@@ -160,12 +165,14 @@ def process_agent_job(job_id: str) -> None:
                 "select": "id,body,created_at", "order": "created_at.asc", "limit": "10",
             })
             prompt = "\n".join(row["body"] for row in rows if row.get("body"))
+            if photo_facts:
+                prompt = (PHOTO_NOTE + "\n" + prompt).strip()
             if not prompt.strip():
                 raise ValueError("No text in agent job")
             history = recent_history(job["conversation_id"], job["first_at"])
             # Search the whole recent thread so follow-ups ("yes", "L size, 3 pcs") keep product context.
             context = "\n".join(item["content"] for item in history) + "\n" + prompt
-            facts = catalog_facts(job["tenant_id"], context)
+            facts = photo_facts or catalog_facts(job["tenant_id"], context)
             profile = _customer_profile(job["conversation_id"])
             # 1 credit = 1 AI reply. Out of credits: AI pauses and the team takes over.
             if not consume_credit(job["tenant_id"], job_id):
@@ -209,6 +216,51 @@ def process_agent_job(job_id: str) -> None:
         except Exception:
             service_request("PATCH", "agent_jobs", params={"id": eq(job_id)},
                             body={"status": "failed", "last_error": type(exc).__name__})
+
+
+PHOTO_NOTE = ("[The customer sent a photo. CURRENT CATALOG lists the products that look most like it, "
+              "closest first. Tell them which product it looks like, with price and stock, and ask them "
+              "to confirm it is the one they want. If several are listed, mention them briefly.]")
+
+
+def _photo_matches(job: dict) -> list[dict] | None:
+    """Catalog facts for products that look like the customer's photo, or None to hand off."""
+    if not vision.enabled():
+        return None
+    try:
+        rows = service_request("GET", "messages", params={
+            "id": eq(job["source_message_id"]), "select": "media", "limit": "1",
+        })
+        media = (rows[0].get("media") or []) if rows else []
+        photo = next((item for item in media if item.get("path")
+                      and str(item.get("mime_type", "")).startswith("image/")), None)
+        if not photo:
+            return None
+        matches = vision.match_photo(job["tenant_id"], vision.storage_bytes("inbox-media", photo["path"]))
+        chosen = vision.confident_matches(matches)
+        logger.info("Photo match for job %s: %s", job["id"],
+                    [(m["product_id"], round(m["similarity"], 3)) for m in matches])
+        return product_facts(job["tenant_id"], [m["product_id"] for m in chosen]) or None
+    except Exception:
+        logger.exception("Photo matching failed for job %s", job["id"])
+        return None
+
+
+@celery_app.task(name="pulse.index_product_images")
+def index_product_images(product_id: str) -> None:
+    if vision.enabled():
+        vision.index_product(product_id)
+
+
+@celery_app.task(name="pulse.index_pending_product_images")
+def index_pending_product_images() -> None:
+    if not vision.enabled():
+        return
+    for product_id in vision.products_needing_index():
+        try:
+            vision.index_product(product_id)
+        except Exception:
+            logger.exception("Indexing photos failed for product %s", product_id)
 
 
 def _customer_profile(conversation_id: str) -> dict | None:

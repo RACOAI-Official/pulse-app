@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     mail_user: str = ""
     mail_pass: str = ""
     company_email_from: str = ""
+    vision_url: str = ""
+    vision_model: str = "Qdrant/Unicom-ViT-B-32"
+    vision_match_threshold: float = 0.70
     # Platform subscription billing (Pulse's own gateway accounts, not merchants').
     pulse_api_public_url: str = ""
     pulse_stripe_secret_key: str = ""

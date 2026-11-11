@@ -8,6 +8,7 @@ services:
         required: false
     environment:
       REDIS_URL: redis://redis:6379/0
+      VISION_URL: http://vision:8000
     depends_on:
       redis:
         condition: service_healthy
@@ -19,6 +20,7 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      VISION_URL: http://vision:8000
     depends_on:
       redis:
         condition: service_healthy
@@ -30,6 +32,7 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      VISION_URL: http://vision:8000
     depends_on:
       redis:
         condition: service_healthy
@@ -44,6 +47,23 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     restart: unless-stopped
     ports: ["127.0.0.1:13000:3000"]
+
+  # Product photo matching (Unicom ViT-B/32 on CPU). Internal only: no published port.
+  # Model files (~0.5 GB) download once into the vision_models volume on first start.
+  vision:
+    build: ./apps/vision
+    environment:
+      VISION_THREADS: "2"
+    volumes: [vision_models:/models]
+    cpus: 2
+    mem_limit: 1500m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8000/health'))['ok'] else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    restart: unless-stopped
 
   redis:
     image: redis:7.4-alpine
@@ -65,6 +85,7 @@ services:
 
 volumes:
   redis_data:
+  vision_models:
 
 configs:
   redis_start:

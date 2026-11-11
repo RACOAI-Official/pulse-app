@@ -204,7 +204,17 @@ async def save_product(tenant_id: UUID, data: ProductInput, auth: Session):
         "p_delivery_minor": data.delivery_minor, "p_state": data.state,
         "p_variants": [v.model_dump(mode="json") for v in data.variants],
     })
+    _queue_photo_index(result)
     return {"id": result}
+
+
+def _queue_photo_index(product_id: str) -> None:
+    # Best effort: the periodic indexer picks up anything missed here.
+    from .tasks import index_product_images
+    try:
+        index_product_images.apply_async(args=[str(product_id)], retry=False)
+    except Exception:
+        pass
 
 
 @router.post("/products/{product_id}/remove")
