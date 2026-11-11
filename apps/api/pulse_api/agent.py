@@ -31,12 +31,16 @@ def config_for_tenant(tenant_id: str) -> dict:
                                  "draft_revision": 0, "tested_revision": 0}
 
 
-def catalog_facts(tenant_id: str, query: str) -> list[dict]:
-    """Bounded tenant-scoped lookup of current sellable prices and stock."""
+def _currency(tenant_id: str) -> str:
     tenants = service_request("GET", "tenants", params={
         "id": eq(tenant_id), "select": "currency_code", "limit": "1",
     })
-    currency = tenants[0]["currency_code"] if tenants else "BDT"
+    return tenants[0]["currency_code"] if tenants else "BDT"
+
+
+def catalog_facts(tenant_id: str, query: str) -> list[dict]:
+    """Bounded tenant-scoped lookup of current sellable prices and stock."""
+    currency = _currency(tenant_id)
     products = service_request("GET", "products", params={
         "tenant_id": eq(tenant_id), "state": "eq.active",
         "select": "id,title,description,delivery_minor", "limit": "200", "order": "updated_at.desc",
@@ -52,6 +56,23 @@ def catalog_facts(tenant_id: str, query: str) -> list[dict]:
     ) else []
     if not chosen:
         return []
+    return _with_variants(tenant_id, chosen, currency)
+
+
+def product_facts(tenant_id: str, product_ids: list[str]) -> list[dict]:
+    """Same facts as catalog_facts for specific active products (e.g. photo matches), in the given order."""
+    if not product_ids:
+        return []
+    rows = service_request("GET", "products", params={
+        "tenant_id": eq(tenant_id), "state": "eq.active", "id": f"in.({','.join(product_ids)})",
+        "select": "id,title,description,delivery_minor", "limit": "10",
+    })
+    order = {product_id: index for index, product_id in enumerate(product_ids)}
+    chosen = sorted(rows, key=lambda row: order.get(row["id"], 99))
+    return _with_variants(tenant_id, chosen, _currency(tenant_id)) if chosen else []
+
+
+def _with_variants(tenant_id: str, chosen: list[dict], currency: str) -> list[dict]:
     ids = ",".join(item["id"] for item in chosen)
     variants = service_request("GET", "product_variants", params={
         "tenant_id": eq(tenant_id), "product_id": f"in.({ids})", "active": "eq.true",

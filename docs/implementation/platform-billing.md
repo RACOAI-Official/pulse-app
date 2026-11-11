@@ -54,7 +54,7 @@ The currency decides the gateway. The Plan page picks a default currency from th
 
 ## Database
 
-Migration `20261111000100_phase_09_plans_credits.sql` adds:
+Migration `20261111000200_phase_09_plans_credits.sql` adds:
 - **Tables:** `billing_accounts`, `billing_checkouts`, `billing_invoices`, `billing_webhook_events`, `billing_operator_grants`, `credit_accounts`, `credit_ledger`.
 - **Billing functions:** `pulse_billing_has_access`, `pulse_billing_settle` (upgrade top-up, newer-payment-wins rule).
 - **Credit functions:** `pulse_credit_consume`, `pulse_credit_refund`, `pulse_credit_roll_cycles`.

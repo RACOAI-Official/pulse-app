@@ -14,3 +14,4 @@ node_modules/
 supabase/.branches/
 supabase/.profiles/
 supabase/.temp/
+apps/vision/.cache/
