@@ -48,6 +48,12 @@ services:
     restart: unless-stopped
     ports: ["127.0.0.1:13000:3000"]
 
+  # Marketing site served at the root of the app host (see Caddyfile).
+  landing:
+    build: ./apps/landing
+    restart: unless-stopped
+    ports: ["127.0.0.1:13001:3000"]
+
   # Product photo matching (Unicom ViT-B/32 on CPU). Internal only: no published port.
   # Model files (~0.5 GB) download once into the vision_models volume on first start.
   vision:

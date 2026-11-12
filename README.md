@@ -36,6 +36,10 @@ Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, ver
 
    For each Meta sandbox asset, set `PULSE_CHANNEL_TOKEN` in the process environment and run `connect-channel` with `--tenant-id`, `--channel`, `--account-id`, and `--display-name`. Do not put access tokens in command arguments or commit them. The account IDs must be the Page ID, Instagram account ID, and WhatsApp phone number ID that appear in the corresponding webhook payloads.
 
+## Marketing site
+
+`apps/landing` is the public website served at the root of the app host (`https://pulse.racoai.io/`). It is a standalone Next.js app with no dependency on the API, Supabase, or `apps/web`; work on it alone with `npm ci && npm run dev` in `apps/landing` (http://localhost:3001). Its bundles are served under `/landing-assets`, and the Caddyfile routes `/`, `/landing-assets/*`, `/media/*`, `/brand-mark.svg` and `/icon.svg` to the `landing` service; every other path goes to `apps/web`. The navbar "Try Pulse" button links to `/login`. Copy and links live in `apps/landing/content/pulse.ts`.
+
 ## Staging
 
 The approved target is an Ubuntu 22.04 VPS with two HTTPS hostnames. Fill `.env` with the remote Supabase project keys, `PULSE_APP_HOST`, `PULSE_API_HOST`, `PULSE_WEB_ORIGIN=https://<app-host>`, and the three `NEXT_PUBLIC_*` values. The existing `SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` settings accept a new `sb_publishable_` key; `SUPABASE_SERVICE_ROLE_KEY` accepts a server-only `sb_secret_` key. Never put the secret key in a `NEXT_PUBLIC_*` variable. Configure the Supabase Auth site URL and allowed redirect URL as `https://<app-host>/auth/callback`. Apply pending migrations with the Supabase CLI, then run `docker compose up -d --build` on the VPS. Point both DNS records at the VPS before expecting Caddy certificates.
