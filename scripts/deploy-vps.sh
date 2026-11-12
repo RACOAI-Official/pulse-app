@@ -16,7 +16,8 @@ docker compose up -d --build
 
 for attempt in {1..20}; do
   if curl -fsS http://127.0.0.1:18080/health >/dev/null &&
-     curl -fsS http://127.0.0.1:13000/login >/dev/null; then
+     curl -fsS http://127.0.0.1:13000/login >/dev/null &&
+     curl -fsS http://127.0.0.1:13001/ >/dev/null; then
     echo "Pulse healthy at $(git rev-parse --short HEAD)"
     exit 0
   fi
@@ -24,5 +25,5 @@ for attempt in {1..20}; do
 done
 
 docker compose ps
-docker compose logs --tail=80 api web
+docker compose logs --tail=80 api web landing
 exit 1
