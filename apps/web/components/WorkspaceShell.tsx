@@ -48,7 +48,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
   if (setupPending && isOwner) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Finishing your setup…</p></main>;
   if (workspace.error) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
 
-  return <div className="workspace">
+  return <div className={`workspace${pathname === "/inbox" ? " workspace-inbox" : ""}`}>
     <button className="mobile-nav-button" aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} aria-controls="workspace-navigation" onClick={() => setOpen(!open)}>{open ? <X size={20} /> : <Menu size={20} />}</button>
     {open && <button className="rail-scrim" aria-label="Close navigation" onClick={() => setOpen(false)} />}
     <aside className={`rail ${open ? "rail-open" : ""}`}>

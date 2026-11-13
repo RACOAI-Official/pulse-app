@@ -152,3 +152,87 @@ def test_draft_confirmation_does_not_claim_confirmed():
               "lines": [{"title": "Tee", "options": {}, "quantity": 1, "line_total_minor": 100}]}
     text = agent.order_confirmation(result, bengali=False)
     assert "received" in text and "confirmed!" not in text
+
+
+def test_catalog_without_product_match_returns_overview(monkeypatch):
+    def fake_store(method, path, **kwargs):
+        if path == "tenants":
+            return [{"currency_code": "BDT"}]
+        if path == "products":
+            return [{"id": "p1", "title": "Canvas tote", "description": "Bag"},
+                    {"id": "p2", "title": "Desk clock", "description": "Clock"}]
+        return [{"product_id": "p1", "regular_price_minor": 185000, "offer_price_minor": None, "stock": 4},
+                {"product_id": "p2", "regular_price_minor": 125000, "offer_price_minor": 99000, "stock": 0}]
+    monkeypatch.setattr(agent, "service_request", fake_store)
+    facts = agent.catalog_facts("tenant-1", "hi, how much is delivery?")
+    assert facts == [
+        {"title": "Canvas tote", "from_price": "1850.00 BDT", "in_stock": True, "overview": True},
+        {"title": "Desk clock", "from_price": "990.00 BDT", "in_stock": False, "overview": True},
+    ]
+
+
+def test_prompt_hides_handoff_text_and_drops_which_product_loop():
+    config = {**agent.DEFAULT_DRAFT, "business_name": "Nook", "media_reply": "HANDOFF-SENTENCE",
+              "media_reply_bangla": "BANGLA-HANDOFF"}
+    system = agent._messages(config, "hello", [], [])[0]["content"]
+    assert "HANDOFF-SENTENCE" not in system and "BANGLA-HANDOFF" not in system
+    assert "ask which product the customer means" not in system
+    assert "Never repeat one of your earlier replies" in system
+
+
+def test_banglish_rule_follows_language_settings():
+    base = {**agent.DEFAULT_DRAFT, "business_name": "Nook"}
+    assert "Banglish" not in agent._messages(base, "hi", [], [])[0]["content"]
+    on = agent._messages({**base, "language_v2": True}, "hi", [], [])[0]["content"]
+    assert "reply in Bangla script" in on
+    english = agent._messages({**base, "language": "english", "language_v2": True}, "hi", [], [])[0]["content"]
+    assert "Always reply in English" in english and "reply in Bangla script" not in english
+
+
+def test_unclosed_think_block_is_stripped(monkeypatch):
+    settings = SimpleNamespace(pulse_llm_chat_url="https://model.example/v1/chat/completions",
+        pulse_llm_model="qwen3", pulse_llm_api_key="", pulse_llm_disable_thinking=False)
+    monkeypatch.setattr(agent, "get_settings", lambda: settings)
+    content = "<think>a</think>Hello there!<think>still thinking about"
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, json={"choices": [{"message": {"content": content}}]}))
+    real_client = httpx.Client
+    monkeypatch.setattr(agent.httpx, "Client", lambda **kwargs: real_client(transport=transport))
+    assert agent.generate_reply({**agent.DEFAULT_DRAFT, "business_name": "Test"}, "Hi", []) == "Hello there!"
+
+
+def test_draft_keeps_language_fields():
+    draft = main.AgentDraft(business_name="Nook", language_v2=True,
+                            media_reply_bangla="একজন সদস্য সাহায্য করবেন", media_reply_english="A teammate will help")
+    dumped = draft.model_dump()
+    assert dumped["language_v2"] is True
+    assert dumped["media_reply_bangla"] and dumped["media_reply_english"]
+
+
+def test_media_reply_uses_configured_language():
+    config = {"media_reply": "default", "media_reply_bangla": "বাংলা", "media_reply_english": "english"}
+    assert agent.media_reply_for({**config, "language": "bangla"}) == "বাংলা"
+    assert agent.media_reply_for({**config, "language": "english"}) == "english"
+    assert agent.media_reply_for({**config, "language": "auto"}, "দাম কত?") == "বাংলা"
+    assert agent.media_reply_for({**config, "language": "auto"}, "price?") == "default"
+    assert agent.media_reply_for({"media_reply": "default", "language": "bangla"}) == "default"
+    assert agent.media_reply_for(None) == "I am passing this to a team member who can help."
+
+
+def test_banglish_turn_gets_language_hint():
+    config = {**agent.DEFAULT_DRAFT, "business_name": "Nook", "language_v2": True}
+    assert agent.looks_banglish("delivery charge koto?")
+    assert not agent.looks_banglish("what is the delivery charge?")
+    assert not agent.looks_banglish("ডেলিভারি চার্জ কত?")
+    assert "LATEST MESSAGE IS BANGLISH" in agent._messages(config, "tote ta ache?", [], [])[0]["content"]
+    assert "LATEST MESSAGE IS BANGLISH" not in agent._messages(config, "is the tote available?", [], [])[0]["content"]
+    off = agent._messages({**config, "language_v2": False}, "tote ta ache?", [], [])
+    assert "LATEST MESSAGE IS BANGLISH" not in off[0]["content"] and len(off) == 2
+
+
+def test_auto_language_follows_latest_message():
+    config = {**agent.DEFAULT_DRAFT, "business_name": "Nook"}
+    assert "LATEST MESSAGE IS ENGLISH" in agent._messages(config, "do you have the speaker?", [], [])[0]["content"]
+    assert "LATEST MESSAGE IS BANGLA" in agent._messages(config, "স্পিকার আছে?", [], [])[0]["content"]
+    fixed = agent._messages({**config, "language": "bangla"}, "do you have the speaker?", [], [])[0]["content"]
+    assert "LATEST MESSAGE IS" not in fixed

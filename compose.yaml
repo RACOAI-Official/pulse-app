@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
     ports: ["127.0.0.1:13000:3000"]
 
-  # Marketing site served at the root of the app host (see Caddyfile).
+  # Marketing site served at the root of the app host (see deploy/nginx/pulse.racoai.io.conf).
   landing:
     build: ./apps/landing
     restart: unless-stopped

@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 
 from .media import save_media
 from . import vision
-from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali, with_delivery,
+from .agent import (catalog_facts, config_for_tenant, extract_order, generate_reply, is_bengali, media_reply_for, with_delivery,
                     order_confirmation, product_facts, recent_history, resolve_order_items)
 from .meta import send_comment_reply, send_text
 from .settings import get_settings
@@ -148,6 +148,7 @@ def process_agent_job(job_id: str) -> None:
         return
     handoff = job["kind"] == "media"
     config: dict = {}
+    prompt = ""
     charged = False
     try:
         from .billing import consume_credit, has_access
@@ -164,7 +165,7 @@ def process_agent_job(job_id: str) -> None:
         if photo_facts:
             handoff = False
         if handoff:
-            reply = config["published"].get("media_reply") or "A teammate will help with your attachment."
+            reply = media_reply_for(config["published"])
         else:
             rows = service_request("GET", "messages", params={
                 "conversation_id": eq(job["conversation_id"]),
@@ -211,8 +212,7 @@ def process_agent_job(job_id: str) -> None:
             except Exception:
                 logger.exception("Credit refund failed for job %s", job_id)
         try:
-            fallback = ((config.get("published") or {}).get("media_reply") or
-                        "I am passing this to a team member who can help.")
+            fallback = media_reply_for(config.get("published"), prompt)
             reply_id = service_request("POST", "rpc/pulse_complete_agent_job", body={
                 "p_job_id": job_id, "p_body": fallback, "p_handoff": True,
             })

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { ArrowRight, BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "@/components/icons";
 import styles from "@/app/studio.module.css";
 import { api } from "@/lib/api";
@@ -32,8 +33,9 @@ export default function AgentEditor({ tenantId, role, variant = "page", onContin
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
-  const previewState = useRef<Record<string, unknown> | null>(null);
-  const [diagnostics, setDiagnostics] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [testError, setTestError] = useState<{ prompt: string; message: string } | null>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   const [prompt, setPrompt] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,6 +54,11 @@ export default function AgentEditor({ tenantId, role, variant = "page", onContin
     }).catch(error => { if (active) { setNotice(error instanceof Error ? error.message : "Could not load agent"); setLoading(false); } });
     return () => { active = false; };
   }, [base]);
+
+  useEffect(() => {
+    const thread = threadRef.current;
+    if (thread) thread.scrollTo({ top: thread.scrollHeight, behavior: "smooth" });
+  }, [turns, pending, testError]);
 
   useEffect(() => {
     const dialog = publishDialog.current;
@@ -77,30 +84,36 @@ export default function AgentEditor({ tenantId, role, variant = "page", onContin
       const result = await api<{ draft_revision: number }>(`${base}/draft`, {
         method: "PUT", body: JSON.stringify(draft),
       });
-      setSaved(JSON.stringify(draft)); setTurns([]); previewState.current = null; setDiagnostics("");
+      setSaved(JSON.stringify(draft)); clearTest();
       setConfig(current => current ? { ...current, draft_revision: result.draft_revision,
         tested_revision: 0, draft } : current);
       setNotice(onboarding ? "Draft saved. Try it in the test phone, then continue." : "Draft saved. Test it before publishing.");
     });
   }
 
-  async function test(event: FormEvent) {
-    event.preventDefault();
-    if (!prompt.trim() || dirty || !config || !draft?.business_name.trim()) return;
-    const question = prompt.trim();
-    await act(async () => {
-      const result = await api<{ response: string; tested_revision: number | null; preview_state?: Record<string, unknown>; diagnostics?: { language: string; intent: string; handoff: boolean } }>(`${base}/test`, {
-        method: "POST", body: JSON.stringify({ prompt: question, history: turns.slice(-8), preview_state: previewState.current }),
+  function clearTest() { setTurns([]); setTestError(null); setPending(null); }
+
+  async function sendTest(question: string) {
+    if (!question || pending || dirty || !config || !draft?.business_name.trim()) return;
+    setPending(question); setTestError(null); setPrompt("");
+    try {
+      const result = await api<{ response: string; tested_revision: number | null }>(`${base}/test`, {
+        method: "POST", body: JSON.stringify({ prompt: question, history: turns.slice(-8) }),
       });
-      setTurns(current => [...current, { role: "user", content: question },
-        { role: "assistant", content: result.response }]);
-      previewState.current = result.preview_state ?? null;
-      setDiagnostics(result.diagnostics ? `${result.diagnostics.language}, ${result.diagnostics.intent}${result.diagnostics.handoff ? ", human handoff" : ""}` : "");
-      setPrompt("");
+      setTurns(current => [...current, { role: "user", content: question }, { role: "assistant", content: result.response }]);
       if (result.tested_revision !== null) {
         setConfig(current => current ? { ...current, tested_revision: result.tested_revision! } : current);
       } else setNotice("The draft changed while testing. Test the latest saved version.");
-    });
+    } catch (error) {
+      setTestError({ prompt: question, message: error instanceof Error ? error.message : "Couldn't get a reply" });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  function test(event: FormEvent) {
+    event.preventDefault();
+    void sendTest(prompt.trim());
   }
 
   async function publish() {
@@ -148,6 +161,23 @@ export default function AgentEditor({ tenantId, role, variant = "page", onContin
       <section className="agent-card"><div className="agent-card-head"><Bot size={19} /><div><h2>When a human is needed</h2></div></div><label className="agent-single">Reply for photos, voice notes, or unavailable AI<textarea disabled={role !== "owner"} maxLength={500} value={draft.media_reply} onChange={e => edit("media_reply", e.target.value)} /></label><label className="agent-single">Bangla handoff reply (blank uses default)<textarea disabled={role !== "owner"} maxLength={500} value={draft.media_reply_bangla ?? ""} onChange={e => edit("media_reply_bangla", e.target.value)} /></label><label className="agent-single">English handoff reply (blank uses default)<textarea disabled={role !== "owner"} maxLength={500} value={draft.media_reply_english ?? ""} onChange={e => edit("media_reply_english", e.target.value)} /></label></section>
       {role === "owner" && <div className="agent-publish"><button className="button primary" disabled={busy || !dirty} onClick={save}><Check size={16} /> Save draft</button><span>{dirty ? "Unsaved changes" : onboarding ? (config.draft_revision > 0 ? "Saved" : "Save to continue") : config.tested_revision === config.draft_revision && config.draft_revision > 0 ? "Draft tested" : "Test the saved draft"}</span>{onboarding ? <button className="button primary" disabled={busy || dirty || config.draft_revision < 1 || !draft.business_name.trim()} onClick={onContinue}>Continue <ArrowRight size={16} /></button> : <><button className="button" disabled={busy || !canPublish} onClick={() => setConfirmPublish(true)}>Publish version</button><button className="button subtle" disabled={busy || !config.published} onClick={toggleLive}>{config.enabled ? <><CirclePause size={16} /> Pause AI</> : <><CirclePlay size={16} /> Enable AI</>}</button></>}</div>}
       {!onboarding && <dialog ref={publishDialog} className="agent-confirm" aria-labelledby="publish-title" onCancel={() => setConfirmPublish(false)}><span className="eyebrow">PUBLISH AGENT</span><h2 id="publish-title">Publish this tested draft?</h2><p>{config.enabled ? "This version will answer live customer conversations immediately." : "This version will be available for customer conversations once you enable AI."}</p><div className="agent-confirm-actions"><button type="button" className="button subtle" disabled={busy} onClick={() => setConfirmPublish(false)}>Cancel</button><button type="button" className="button primary" disabled={busy} onClick={publish}>{busy ? "Publishing…" : "Confirm publish"}</button></div></dialog>}
-    </div><aside className="agent-preview"><div className="preview-head"><FlaskConical size={18} /><div><strong>Private test phone</strong><span>Draft preview. No message is sent.</span></div><button className="text-button" onClick={() => { setTurns([]); previewState.current = null; setDiagnostics(""); }}>Clear</button></div><div className="preview-thread">{turns.length ? turns.map((turn, index) => <div key={index} className={`preview-bubble ${turn.role}`}>{turn.content}</div>) : <div className="preview-empty"><Bot size={32} /><strong>Start as a customer.</strong><p>Ask about products, delivery, or a tricky situation. Test in Bangla, Banglish, and English.</p></div>}</div><form onSubmit={test} className="preview-composer"><textarea aria-label="Test message" value={prompt} maxLength={1000} onChange={e => setPrompt(e.target.value)} placeholder={dirty ? "Save your draft to test it" : "Ask your assistant…"} disabled={busy || dirty || !draft.business_name.trim()} /><button className="button primary" disabled={busy || dirty || !prompt.trim() || !draft.business_name.trim()}><Send size={16} /> {busy ? "Thinking…" : "Test reply"}</button></form><p className="preview-foot">{diagnostics}</p><p className="preview-foot">AI can make mistakes. Check facts and tone before publishing.</p></aside></div>
+    </div><aside className="test-phone" aria-label="Private test phone">
+      <div className="test-phone-label"><FlaskConical size={16} /><strong>Private test phone</strong><span>Draft preview · nothing is sent</span></div>
+      <div className="test-phone-device">
+        <div className="test-phone-screen">
+          <header className="test-phone-head"><span className="test-phone-avatar" aria-hidden="true">{(draft.business_name.trim() || "P").charAt(0).toUpperCase()}</span><div><strong>{draft.business_name.trim() || "Your business"}</strong><span>{pending ? "typing…" : dirty ? "Save your draft to test" : `Test mode · draft ${config.draft_revision || "—"}`}</span></div><button type="button" className="test-phone-clear" aria-label="Clear test chat" title="Clear chat" disabled={!turns.length && !testError} onClick={clearTest}><Trash2 size={16} /></button></header>
+          <div className="test-phone-thread" ref={threadRef} aria-live="polite">
+            {turns.length || pending || testError ? <>
+              {turns.map((turn, index) => <div key={index} className={`test-bubble ${turn.role}`}>{turn.content}</div>)}
+              {pending && <><div className="test-bubble user">{pending}</div><div className="test-bubble assistant typing" aria-label="Assistant is typing"><i /><i /><i /></div></>}
+              {testError && <><div className="test-bubble user failed">{testError.prompt}</div><div className="test-bubble system" role="alert"><span>{testError.message}</span><button type="button" onClick={() => { const retry = testError.prompt; void sendTest(retry); }}>Retry</button></div></>}
+            </> : <div className="test-phone-empty"><Bot size={28} /><strong>Chat as a customer</strong><p>Ask about products, prices or delivery. Try Bangla, Banglish and English.</p></div>}
+          </div>
+          <form onSubmit={test} className="test-phone-composer"><textarea rows={1} aria-label="Test message" value={prompt} maxLength={1000} onChange={e => setPrompt(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendTest(prompt.trim()); } }} placeholder={dirty ? "Save your draft to test it" : "Message…"} disabled={!!pending || dirty || !draft.business_name.trim()} /><button type="submit" aria-label="Send test message" disabled={!!pending || dirty || !prompt.trim() || !draft.business_name.trim()}><Send size={17} /></button></form>
+        </div>
+        <Image className="test-phone-frame" src="/phone-frame.svg" alt="" aria-hidden="true" width={752} height={1484} unoptimized />
+      </div>
+      <p className="test-phone-foot">AI can make mistakes. Check facts and tone before publishing.</p>
+    </aside></div>
   </main>;
 }
