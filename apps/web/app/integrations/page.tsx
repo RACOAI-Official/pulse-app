@@ -5,6 +5,7 @@ import Link from "next/link";
 import ChannelConnect, { PathaoConnect } from "@/components/ChannelConnect";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 const later = ["Shopify", "WooCommerce", "Custom Store", "Google Sheets", "Nuport", "Website Chatbot"];
 
@@ -14,6 +15,7 @@ function IntegrationsContent({ tenantId, role }: { tenantId: string; role: strin
     api<{ paid: boolean }>(`/tenants/${tenantId}/onboarding/flow`).then(flow => setPaid(flow.paid)).catch(() => setPaid(false));
   }, [tenantId]);
   const isOwner = role === "owner";
+  if (paid === null) return <main className="commerce-page"><header className="commerce-heading"><h1>Integrations</h1></header><SectionSkeleton /></main>;
   return <main className="commerce-page"><header className="commerce-heading"><div><h1>Integrations</h1><p>Connect your Meta channels so Pulse can answer customers and fill your Inbox.</p></div>
     {paid === false && isOwner && <Link href="/plan" className="button primary">Upgrade to Pro</Link>}</header>
     {paid !== null && <ChannelConnect tenantId={tenantId} isOwner={isOwner} paid={paid} returnTo="integrations" />}

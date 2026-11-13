@@ -12,6 +12,7 @@ import { ArrowLeft, ArrowRight, Check, LogOut } from "@/components/icons";
 import { api, ChannelConnection, OnboardingStep } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
 import PulseMark from "@/components/PulseMark";
+import { BootLoading } from "@/components/LoadingFeedback";
 
 type Step = Exclude<OnboardingStep, "done">;
 type Flow = { step: OnboardingStep; completed: boolean; business_name: string; plan_state: string | null; plan_key: string | null; paid: boolean };
@@ -30,6 +31,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const workspace = useWorkspace();
   const { tenantId, current } = workspace;
+  const refreshWorkspace = workspace.refresh;
   const [flow, setFlow] = useState<Flow | null>(null);
   const [step, setStep] = useState<Step>("business");
   const [notice, setNotice] = useState("");
@@ -47,9 +49,9 @@ export default function OnboardingPage() {
     const paymentReturn = params.get("return");
     const oauthReturn = params.get("pick") || params.get("connected") || params.get("oauth_error");
     if (paymentReturn) window.history.replaceState(null, "", "/onboarding");
-    loadFlow().then(next => {
+    loadFlow().then(async next => {
       if (!alive) return;
-      if (next.completed) { router.replace("/dashboard"); return; }
+      if (next.completed) { await refreshWorkspace(); router.replace("/dashboard"); return; }
       const saved = next.step as Step;
       setStep(oauthReturn && next.paid ? "integrations" : saved);
       if (paymentReturn === "cancel") { setStep("plan"); setNotice("Checkout was cancelled. No payment was taken."); }
@@ -73,7 +75,7 @@ export default function OnboardingPage() {
       }
     }, 2000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [tenantId, isOwner, loadFlow, router]);
+  }, [tenantId, isOwner, loadFlow, router, refreshWorkspace]);
 
   async function go(next: Step) {
     setMoving(true); setError(""); setNotice("");
@@ -89,16 +91,18 @@ export default function OnboardingPage() {
     setError("");
     try {
       await api(`/tenants/${tenantId}/onboarding/free`, { method: "POST" });
+      await refreshWorkspace();
       router.replace("/dashboard");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not start the free trial"); }
   }
 
   async function finish() {
     await api(`/tenants/${tenantId}/onboarding/complete`, { method: "POST" });
+    await refreshWorkspace();
     router.replace("/dashboard");
   }
 
-  if (workspace.loading || (isOwner && !flow && !error)) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Preparing your setup…</p></main>;
+  if (workspace.loading || (isOwner && !flow && !error)) return <BootLoading message="Preparing your setup…" />;
   if (workspace.error) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>{workspace.error}</p></main>;
   if (!current) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>No workspace found for this account.</p></main>;
   if (!isOwner) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>The owner of {current.tenants.name} is finishing setup.</p></main>;

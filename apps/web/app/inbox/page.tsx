@@ -7,6 +7,7 @@ import ChannelIcon from "@/components/ChannelIcon";
 import Link from "next/link";
 import { CommentsInbox, OrdersInbox, TicketsInbox, UnrepliedInbox } from "@/components/InboxExtraViews";
 import { api, Conversation, InboxMedia, Message, websocketBase } from "@/lib/api";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 const channels = ["all", "messenger", "instagram", "whatsapp"] as const;
 const labels = { messenger: "Messenger", instagram: "Instagram", whatsapp: "WhatsApp" };
@@ -207,6 +208,8 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
       setError("Ticket created for this conversation.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not create ticket"); }
   }
+
+  if (loading && !conversations.length) return <SectionSkeleton variant="inbox" />;
 
   return <div className={`inbox-layout ${mobileThreadOpen ? "mobile-thread-open" : ""}`}>
     <section className="conversation-panel">

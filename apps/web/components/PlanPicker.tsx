@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check } from "@/components/icons";
 import { api } from "@/lib/api";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 import { CURRENCIES, type Currency, detectCurrency, formatMoney, rememberCurrency } from "@/lib/currency";
 
 type PlanKey = "pro" | "enterprise";
@@ -173,6 +174,8 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
 
   const lockedTerms = paidActive && !sslRenewalOpen;
   const selectedPlan = status?.plans.find(plan => plan.key === selected);
+
+  if (!status && !error) return <main className={`commerce-page plan-page ${onboarding ? "plan-page-onboarding" : ""}`}><header className="commerce-heading"><h1>{onboarding ? "Pick how you start" : "Plans & AI credits"}</h1></header><SectionSkeleton /></main>;
 
   return <main className={`commerce-page plan-page ${onboarding ? "plan-page-onboarding" : ""}`}>
     <header className="commerce-heading plan-heading">

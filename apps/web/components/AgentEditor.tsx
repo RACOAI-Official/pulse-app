@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ArrowRight, BookOpen, Bot, Check, CirclePause, CirclePlay, FlaskConical, Plus, Send, Trash2 } from "@/components/icons";
 import styles from "@/app/studio.module.css";
 import { api } from "@/lib/api";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 type Fact = { topic: string; content: string };
 type Faq = { question: string; answer: string };
@@ -138,7 +139,7 @@ export default function AgentEditor({ tenantId, role, variant = "page", onContin
     });
   }
 
-  if (loading) return <main className="agent-page"><p>Opening agent studio…</p></main>;
+  if (loading) return <main className={`${styles.studio} agent-page`}><header className="agent-heading"><div><h1>Your assistant</h1></div></header><SectionSkeleton variant="agent" /></main>;
   if (!draft || !config) return <main className="agent-page"><p role="alert">{notice || "Agent configuration unavailable"}</p></main>;
   return <main className={`${styles.studio} agent-page`}>
     <header className="agent-heading"><div><h1>{onboarding ? "Teach your assistant" : "Your assistant"}</h1><p>{onboarding ? "Describe your business and voice, save, then chat with the test phone to see how it replies." : "The draft stays private until you publish it. Customer replies always use current catalog data."}</p></div>{!onboarding && <div className="agent-state"><span className={config.enabled ? "live-dot" : "paused-dot"} />{config.enabled ? "Live replies on" : "Live replies off"}<small>Published v{config.published_version || "—"}</small></div>}</header>

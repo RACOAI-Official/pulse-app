@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lottiefiles/dotlottie-react": "^0.22.2",
     "@phosphor-icons/react": "^2.1.10",
     "@supabase/supabase-js": "2.117.3",
     "next": "16.4.3",

@@ -7,6 +7,7 @@ import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Hea
 import { api } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
 import PulseMark from "@/components/PulseMark";
+import { BootLoading } from "@/components/LoadingFeedback";
 
 export type Workspace = ReturnType<typeof useWorkspace>;
 
@@ -44,8 +45,8 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
     window.addEventListener("pulse:orders-seen", load);
     return () => { alive = false; clearInterval(timer); window.removeEventListener("pulse:orders-seen", load); };
   }, [tenantId]);
-  if (workspace.loading) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Opening workspace…</p></main>;
-  if (setupPending && isOwner) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Finishing your setup…</p></main>;
+  if (workspace.loading) return <BootLoading />;
+  if (setupPending && isOwner) return <BootLoading message="Finishing your setup…" />;
   if (workspace.error) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
 
   return <div className={`workspace${pathname === "/inbox" ? " workspace-inbox" : ""}`}>

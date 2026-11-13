@@ -8,6 +8,7 @@ import styles from "@/app/studio.module.css";
 import { api, ChannelConnection } from "@/lib/api";
 import OnboardingCard from "@/components/OnboardingCard";
 import CourierReturns from "@/components/CourierReturns";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 type Daily = { day: string; received: number; ai_replies: number; human_replies: number; orders: number; sales_minor: number };
 type Analytics = {
@@ -44,7 +45,7 @@ function AnalyticsContent({ tenantId, dashboard }: { tenantId: string; dashboard
     <header className="insights-heading"><div><h1>{dashboard ? "Dashboard" : "Analytics"}</h1><p>Actual activity recorded by Pulse. Times shown for Asia/Dhaka. Orders exclude cancellations.</p></div><div className="insights-controls"><label>Period <select value={days} onChange={event => setDays(Number(event.target.value) as 7 | 30 | 90)}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label><button className="button subtle" onClick={refresh}>Refresh</button></div></header>
     {dashboard && <OnboardingCard tenantId={tenantId} />}
     {error && <div className="form-notice" role="alert">{error}</div>}
-    {loading && !data ? <div className="commerce-card">Loading live metrics…</div> : data && <>
+    {loading && !data ? <SectionSkeleton variant="dashboard" /> : data && <>
       <div className="metric-grid">
         <Metric label="Received messages" value={data.totals.received} icon={<MessageSquare size={18} />} hint={`${data.active_conversations} active conversations`} />
         <Metric label="AI replies" value={data.totals.ai_replies} icon={<Bot size={18} />} hint={`${data.totals.automation_percent}% of replies`} />

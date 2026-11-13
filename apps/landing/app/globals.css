@@ -142,6 +142,21 @@ body {
   scrollbar-width: none;
 }
 
+.site-loading {
+  min-height: 100dvh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  background: #fbfcf9;
+  color: #153b37;
+}
+.site-loading p { margin: 0; font-size: 14px; color: #627d76; }
+.site-loading-animation { width: min(300px, 75vw); height: 168px; display: grid; place-items: center; overflow: hidden; }
+.site-loading-animation > div, .site-loading-animation canvas { width: 100% !important; height: 100% !important; }
+.site-loading-still { width: 34px; height: 34px; border: 3px solid #dce5df; border-top-color: #0b4f4b; border-radius: 50%; animation: site-loading-spin .85s linear infinite; }
+@keyframes site-loading-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

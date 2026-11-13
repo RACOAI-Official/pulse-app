@@ -7,6 +7,7 @@ import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 import { CommerceConfig, CommerceOrder, decimal, money, OrderState, Product, Shipment, toMinor } from "@/lib/commerce";
 import CourierPanel from "@/components/CourierPanel";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 type Draft = { id?: string; customer_name: string; customer_phone: string; delivery_address: string; discount_type: "none" | "amount" | "percent"; discount: string; delivery: string; items: { variant_id: string; quantity: number }[] };
 const emptyDraft = (): Draft => ({ customer_name: "", customer_phone: "", delivery_address: "", discount_type: "none", discount: "0", delivery: "0.00", items: [{ variant_id: "", quantity: 1 }] });
@@ -123,6 +124,7 @@ function OrdersContent({ tenantId, role }: { tenantId: string; role: string }) {
     const variant = choices.find(v => v.id === line.variant_id);
     return total + (variant?.offer_price_minor ?? variant?.regular_price_minor ?? 0) * line.quantity;
   }, 0) || 0;
+  if (!config && !notice) return <main className="commerce-page"><header className="commerce-heading"><h1>Orders</h1></header><SectionSkeleton /></main>;
   return <main className="commerce-page"><header className="commerce-heading orders-heading"><div><h1>Orders</h1><p>Create manual orders, confirm stock, and record payments.</p></div><button className="button primary" onClick={() => { setDraft(emptyDraft()); setSelectedId(""); }} disabled={!choices.length}><Plus size={16} /> New order</button></header>
     {notice && <p className="form-notice" role="status">{notice}</p>}
     {!choices.length && <p className="form-notice">Activate a product with an image before creating an order.</p>}

@@ -5,6 +5,7 @@ import { Archive, FileUp, Package, PackagePlus, RefreshCw, Trash2, X } from "@/c
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 import { CommerceConfig, Currency, decimal, money, Product, toMinor } from "@/lib/commerce";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 type MediaRef = { path: string } | { url: string };
 type EditImage = { key: string; media: MediaRef; preview: string };
@@ -153,6 +154,7 @@ function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | 
     });
   }
   const shown = products.filter(p => matchesFilter(p, filter) && `${p.title} ${p.category}`.toLowerCase().includes(query.toLowerCase()));
+  if (!config && !notice) return <main className="commerce-page"><header className="commerce-heading"><h1>Catalog</h1></header><SectionSkeleton /></main>;
   return <main className="commerce-page">
     <header className="commerce-heading catalog-heading"><div><h1>Catalog</h1><p>Manage products, variants, images, and available stock.</p></div><button className="button primary" onClick={() => startEditing(emptyProduct())}><PackagePlus size={16} /> Add product</button></header>
     {notice && <p className="form-notice" role="status">{notice}</p>}
