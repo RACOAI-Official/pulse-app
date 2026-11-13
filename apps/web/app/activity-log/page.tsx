@@ -3,13 +3,16 @@
 import { useEffect, useState } from "react";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
+import { SectionSkeleton } from "@/components/LoadingFeedback";
 
 type Activity = { id: string; action: string; subject_type: string; subject_id: string | null; actor_user_id: string | null; created_at: string };
 
 function ActivityContent({ tenantId }: { tenantId: string }) {
   const [rows, setRows] = useState<Activity[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => { api<Activity[]>(`/tenants/${tenantId}/activity`).then(setRows).catch(caught => setError(caught.message)); }, [tenantId]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { api<Activity[]>(`/tenants/${tenantId}/activity`).then(setRows).catch(caught => setError(caught.message)).finally(() => setLoaded(true)); }, [tenantId]);
+  if (!loaded) return <main className="commerce-page"><header className="commerce-heading"><h1>Activity Log</h1></header><SectionSkeleton /></main>;
   return <main className="commerce-page"><header className="commerce-heading"><div><h1>Activity Log</h1><p>Changes to products, orders, agent settings, and tickets in this workspace.</p></div></header>{error && <p className="form-notice" role="alert">{error}</p>}<section className="commerce-card"><h2>Recent activity</h2>{rows.length ? rows.map(row => <div className="insights-list-row" key={row.id}><strong>{row.subject_type.replaceAll("_", " ")} / {row.action}</strong><span>{new Date(row.created_at).toLocaleString()} / {row.actor_user_id ? `Member ${row.actor_user_id.slice(0, 8)}` : "System"}</span></div>) : <p className="insights-empty">No recorded changes yet. New changes will appear here.</p>}</section></main>;
 }
 
