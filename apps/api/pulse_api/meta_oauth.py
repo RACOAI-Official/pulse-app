@@ -11,18 +11,18 @@ import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx
 import redis.asyncio as aioredis
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
-from .main import Session, membership, owner
+from .deps import Session, membership, owner, user_limit
 from .settings import get_settings
 from .store import eq, service_request
 
@@ -43,7 +43,7 @@ class StartInput(BaseModel):
 
 class SelectInput(BaseModel):
     pick: str = Field(min_length=8, max_length=64, pattern="^[A-Za-z0-9_-]+$")
-    page_ids: list[str] = Field(min_length=1, max_length=10)
+    page_ids: list[Annotated[str, StringConstraints(pattern="^[0-9]{1,40}$")]] = Field(min_length=1, max_length=10)
 
 
 class WhatsAppInput(BaseModel):
@@ -167,7 +167,7 @@ async def oauth_config(tenant_id: UUID, auth: Session) -> dict:
             "providers": {name: provider_ready(name) for name in ("messenger", "instagram", "whatsapp")}}
 
 
-@router.post("/oauth/{provider}/start")
+@router.post("/oauth/{provider}/start", dependencies=[user_limit("oauth-start", 20, 600)])
 async def start(tenant_id: UUID, provider: Literal["messenger", "instagram"], data: StartInput, auth: Session) -> dict:
     await owner(tenant_id, auth[0])
     from .billing import require_paid
@@ -251,7 +251,8 @@ async def _load_pick(pick: str, tenant: str, user: str, *, delete: bool = False)
 
 
 @router.get("/oauth/meta/pick/{pick}")
-async def pick_pages(tenant_id: UUID, pick: str, auth: Session) -> list[dict]:
+async def pick_pages(tenant_id: UUID, pick: Annotated[str, Path(min_length=8, max_length=64, pattern="^[A-Za-z0-9_-]+$")],
+                     auth: Session) -> list[dict]:
     await owner(tenant_id, auth[0])
     data = await _load_pick(pick, str(tenant_id), auth[1]["id"])
     return [{"id": page["id"], "name": page["name"]} for page in data["pages"]]
@@ -310,7 +311,7 @@ async def instagram_callback(state: str = "", code: str = "", error_description:
     return _web(back, step="integrations", connected="instagram")
 
 
-@router.post("/oauth/whatsapp/complete")
+@router.post("/oauth/whatsapp/complete", dependencies=[user_limit("oauth-complete", 10, 600)])
 async def whatsapp_complete(tenant_id: UUID, data: WhatsAppInput, auth: Session) -> dict:
     """Finish WhatsApp Embedded Signup: swap the SDK code for a business token and subscribe the WABA."""
     await owner(tenant_id, auth[0])

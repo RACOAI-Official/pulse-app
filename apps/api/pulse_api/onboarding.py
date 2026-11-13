@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .agent import config_for_tenant
-from .main import Session, membership, owner
+from .deps import Session, membership, owner
 from .store import eq, service_request, user_request
 
 router = APIRouter(prefix="/tenants/{tenant_id}", tags=["onboarding"])
@@ -33,7 +33,8 @@ class DeliveryInput(BaseModel):
     inside_dhaka_days: int = Field(ge=0, le=60)
     outside_dhaka_days: int = Field(ge=0, le=60)
     cod_enabled: bool = True
-    free_delivery_threshold_minor: int | None = Field(default=None, ge=0, le=100_000_000_00)
+    # Column is integer: 100_000_000_00 overflowed it.
+    free_delivery_threshold_minor: int | None = Field(default=None, ge=0, le=2_147_483_647)
     notes: str = Field(default="", max_length=1000)
 
 

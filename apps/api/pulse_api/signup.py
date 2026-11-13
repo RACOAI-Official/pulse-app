@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from .emails import send, signup_code
+from .deps import ip_limit
 from .settings import get_settings
 from .store import StoreError, service_auth_request, service_request
 
@@ -66,7 +67,8 @@ def send_code_email(to: str, code: str) -> None:
     logger.info("Sign-up code sent via %s", transport)
 
 
-@router.post("/start")
+# Per-email cooldown/attempts below stop hammering one address; per-IP caps stop spraying many addresses.
+@router.post("/start", dependencies=[ip_limit("signup-start", 10, 3600)])
 async def start_signup(data: StartBody) -> dict:
     client = _redis()
     try:
@@ -87,7 +89,7 @@ async def start_signup(data: StartBody) -> dict:
     return {"sent": True, "expires_in": CODE_TTL}
 
 
-@router.post("/verify")
+@router.post("/verify", dependencies=[ip_limit("signup-verify", 30, 3600)])
 async def verify_signup(data: VerifyBody) -> dict:
     key = f"signup:{data.email}"
     client = _redis()

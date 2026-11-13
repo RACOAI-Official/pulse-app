@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import re
+from typing import Annotated
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
@@ -12,14 +13,21 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
-from .main import Session, membership
+from .deps import Session, membership, user_limit
 from .request_body import read_limited_body
 from .settings import get_settings
-from .store import eq, service_headers, service_request, storage_path, user_request
+from .store import eq, service_headers, service_request, storage_path, tenant_owned_path, user_request
 
 router = APIRouter(prefix="/tenants/{tenant_id}/commerce", tags=["commerce"])
+
+# Bounds match the columns: stock/quantity/discount_value are integer, money is bigint. MAX_MINOR keeps
+# price x quantity (<= 10000) far inside bigint and equals the CSV importer's cap.
+INT4_MAX = 2_147_483_647
+MAX_MINOR = 9_000_000_000_000
+OptionName = Annotated[str, StringConstraints(min_length=1, max_length=50)]
+OptionValue = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 
 
 def _media(tenant_id: UUID, items: list[dict]) -> list[dict]:
@@ -28,7 +36,7 @@ def _media(tenant_id: UUID, items: list[dict]) -> list[dict]:
     checked = []
     for item in items:
         path, url = item.get("path"), item.get("url")
-        if path and isinstance(path, str) and path.startswith(f"{tenant_id}/"):
+        if path and tenant_owned_path(tenant_id, path):
             checked.append({"path": path})
         elif url and isinstance(url, str):
             parsed = urlparse(url)
@@ -45,10 +53,10 @@ def _media(tenant_id: UUID, items: list[dict]) -> list[dict]:
 class VariantInput(BaseModel):
     id: UUID | None = None
     sku: str = Field(default="", max_length=80)
-    options: dict[str, str] = Field(default_factory=dict)
-    regular_price_minor: int = Field(ge=0)
-    offer_price_minor: int | None = Field(default=None, ge=0)
-    stock: int = Field(default=0, ge=0)
+    options: dict[OptionName, OptionValue] = Field(default_factory=dict, max_length=10)
+    regular_price_minor: int = Field(ge=0, le=MAX_MINOR)
+    offer_price_minor: int | None = Field(default=None, ge=0, le=MAX_MINOR)
+    stock: int = Field(default=0, ge=0, le=INT4_MAX)
 
 
 class ProductInput(BaseModel):
@@ -57,8 +65,8 @@ class ProductInput(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     category: str = Field(default="", max_length=100)
     description: str = Field(default="", max_length=5000)
-    media: list[dict] = Field(default_factory=list)
-    delivery_minor: int | None = Field(default=None, ge=0)
+    media: list[dict] = Field(default_factory=list, max_length=20)
+    delivery_minor: int | None = Field(default=None, ge=0, le=MAX_MINOR)
     state: str = Field(default="draft", pattern="^(draft|active)$")
     variants: list[VariantInput] = Field(min_length=1, max_length=100)
 
@@ -68,7 +76,7 @@ class CurrencyInput(BaseModel):
 
 
 class StockInput(BaseModel):
-    delta: int
+    delta: int = Field(ge=-INT4_MAX, le=INT4_MAX)
     reason: str = Field(min_length=1, max_length=240)
 
 
@@ -88,8 +96,8 @@ class OrderInput(BaseModel):
     customer_phone: str = Field(default="", max_length=40)
     delivery_address: str = Field(default="", max_length=1000)
     discount_type: str = Field(default="none", pattern="^(none|amount|percent)$")
-    discount_value: int = Field(default=0, ge=0)
-    delivery_minor: int = Field(default=0, ge=0)
+    discount_value: int = Field(default=0, ge=0, le=INT4_MAX)
+    delivery_minor: int = Field(default=0, ge=0, le=MAX_MINOR)
     items: list[OrderLine] = Field(min_length=1, max_length=100)
 
 
@@ -103,7 +111,7 @@ class ActionInput(BaseModel):
 
 
 class PaymentInput(BaseModel):
-    amount_minor: int = Field(gt=0)
+    amount_minor: int = Field(gt=0, le=MAX_MINOR)
     method: str = Field(pattern="^(cash|bank|card|bkash|nagad|rocket|other)$")
     note: str = Field(default="", max_length=240)
 
@@ -115,7 +123,7 @@ class HandoffInput(BaseModel):
     courier: str = Field(pattern=COURIERS)
     courier_name: str | None = Field(default=None, max_length=80)
     tracking_code: str | None = Field(default=None, max_length=100)
-    delivery_fee_minor: int | None = Field(default=None, ge=0)
+    delivery_fee_minor: int | None = Field(default=None, ge=0, le=MAX_MINOR)
 
 
 class CourierStatusInput(BaseModel):
@@ -124,13 +132,13 @@ class CourierStatusInput(BaseModel):
 
 class DamagedItem(BaseModel):
     item_id: UUID
-    quantity: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=10000)
 
 
 class ReturnInput(BaseModel):
     damaged: list[DamagedItem] = Field(default_factory=list, max_length=100)
-    damage_loss_minor: int = Field(default=0, ge=0)
-    delivery_fee_minor: int | None = Field(default=None, ge=0)
+    damage_loss_minor: int = Field(default=0, ge=0, le=MAX_MINOR)
+    delivery_fee_minor: int | None = Field(default=None, ge=0, le=MAX_MINOR)
     note: str = Field(default="", max_length=500)
 
 
@@ -305,7 +313,7 @@ def _minor(raw: str, label: str, optional: bool = False) -> int | None:
         if not number.is_finite() or number < 0 or number.as_tuple().exponent < -2:
             raise InvalidOperation
         result = int(number * 100)
-        if result > 9_000_000_000_000:
+        if result > MAX_MINOR:
             raise InvalidOperation
         return result
     except (InvalidOperation, ValueError):
@@ -333,18 +341,23 @@ def parse_csv(text: str, tenant_id: UUID) -> tuple[list[dict], list[dict]]:
             sku = (row["sku"] or "").strip()
             if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", key) or not title or not sku:
                 raise ValueError("Product key, title, and SKU are required")
+            if len(title) > 160 or len(sku) > 80 or len(row["category"] or "") > 100 \
+                    or len(row["description"] or "") > 5000:
+                raise ValueError("Title, SKU, category, or description is too long")
             stock = int(row["stock"] or "0")
-            if stock < 0:
-                raise ValueError("Stock must be nonnegative")
+            if stock < 0 or stock > INT4_MAX:
+                raise ValueError("Stock must be 0 to 2147483647")
             options = {}
             for pair in (row["options"] or "").split("|"):
                 if pair:
                     if "=" not in pair:
                         raise ValueError("Options must use Name=Value pairs")
                     name, value = (part.strip() for part in pair.split("=", 1))
-                    if not name or not value or name in options:
+                    if not name or not value or name in options or len(name) > 50 or len(value) > 100:
                         raise ValueError("Invalid option")
                     options[name] = value
+            if len(options) > 10:
+                raise ValueError("At most 10 options per variant")
             media = _media(tenant_id, [{"url": url.strip()} for url in
                 (row["image_urls"] or "").split("|") if url.strip()])
             regular = _minor(row["regular_price"] or "", "regular price")
@@ -372,7 +385,7 @@ def parse_csv(text: str, tenant_id: UUID) -> tuple[list[dict], list[dict]]:
     return list(grouped.values()), errors
 
 
-@router.post("/csv/preview")
+@router.post("/csv/preview", dependencies=[user_limit("csv", 20, 60)])
 async def csv_preview(tenant_id: UUID, data: CsvInput, auth: Session):
     await membership(tenant_id, auth[0])
     products, errors = parse_csv(data.csv_text, tenant_id)
@@ -381,7 +394,7 @@ async def csv_preview(tenant_id: UUID, data: CsvInput, auth: Session):
             "variant_count": sum(len(p["variants"]) for p in products)}
 
 
-@router.post("/csv/commit")
+@router.post("/csv/commit", dependencies=[user_limit("csv", 20, 60)])
 async def csv_commit(tenant_id: UUID, data: CsvInput, auth: Session):
     await membership(tenant_id, auth[0])
     digest = hashlib.sha256(data.csv_text.encode()).hexdigest()
@@ -548,7 +561,7 @@ async def record_payment(tenant_id: UUID, order_id: UUID, data: PaymentInput, au
     return {"id": payment_id}
 
 
-@router.post("/media")
+@router.post("/media", dependencies=[user_limit("media-upload", 60, 60)])
 async def upload_media(tenant_id: UUID, request: Request, auth: Session):
     await membership(tenant_id, auth[0])
     mime = request.headers.get("content-type", "").split(";")[0]
@@ -570,9 +583,9 @@ async def upload_media(tenant_id: UUID, request: Request, auth: Session):
 
 
 @router.get("/media/sign")
-async def sign_media(tenant_id: UUID, auth: Session, path: str):
+async def sign_media(tenant_id: UUID, auth: Session, path: Annotated[str, Query(max_length=300)]):
     await membership(tenant_id, auth[0])
-    if not path.startswith(f"{tenant_id}/"):
+    if not tenant_owned_path(tenant_id, path):
         raise HTTPException(404, "Image not found")
     settings = get_settings()
     async with httpx.AsyncClient(timeout=10) as client:

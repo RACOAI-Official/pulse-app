@@ -5,7 +5,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from pulse_api import agent, main
+from pulse_api import agent, deps, main
 
 
 def test_local_model_uses_configured_endpoint_and_returns_content(monkeypatch):
@@ -53,7 +53,7 @@ def test_catalog_lookup_always_scopes_tenant(monkeypatch):
 async def test_staff_cannot_save_agent_draft(monkeypatch):
     async def fake_membership(*args):
         return {"role": "staff"}
-    monkeypatch.setattr(main, "membership", fake_membership)
+    monkeypatch.setattr(deps, "membership", fake_membership)  # owner() lives in deps
     with pytest.raises(HTTPException) as exc:
         await main.save_agent_draft(UUID("00000000-0000-0000-0000-000000000001"),
             main.AgentDraft(business_name="Test"), ("token", {"id": "user"}))
