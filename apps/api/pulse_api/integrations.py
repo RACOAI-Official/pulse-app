@@ -3,13 +3,14 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Annotated
 from uuid import UUID
 
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
-from .main import Session, membership, owner
+from .deps import Session, membership, owner, user_limit
 from .settings import get_settings
 from .store import eq, service_request
 
@@ -19,7 +20,8 @@ router = APIRouter(prefix="/tenants/{tenant_id}/integrations", tags=["integratio
 
 class IntegrationInput(BaseModel):
     environment: str = Field(pattern="^(sandbox|live)$")
-    credentials: dict[str, str]
+    credentials: dict[Annotated[str, StringConstraints(max_length=40)],
+                      Annotated[str, StringConstraints(max_length=500)]] = Field(max_length=10)
 
 
 def _fernet() -> Fernet:
@@ -40,7 +42,7 @@ async def integrations(tenant_id: UUID, auth: Session):
     return [by_provider.get("pathao", {"provider": "pathao", "status": "not_connected"})]
 
 
-@router.put("/{provider}")
+@router.put("/{provider}", dependencies=[user_limit("integration-save", 10, 600)])
 async def save_integration(tenant_id: UUID, provider: str, data: IntegrationInput, auth: Session):
     await owner(tenant_id, auth[0])
     from .billing import require_paid

@@ -102,3 +102,13 @@ def eq(value: str) -> str:
 
 def storage_path(path: str) -> str:
     return quote(path, safe="/")
+
+
+def tenant_owned_path(tenant_id: Any, path: Any) -> bool:
+    """True for a storage path inside the tenant's folder. Rejects '.'/'..'/empty segments: HTTP clients
+    collapse dot segments, so '<tenant>/../<other>/x' would otherwise reach another tenant's object."""
+    if not isinstance(path, str) or len(path) > 300 or "\\" in path or "%" in path:
+        return False
+    parts = path.split("/")
+    return (len(parts) >= 2 and parts[0] == str(tenant_id)
+            and all(part not in ("", ".", "..") and part.isprintable() for part in parts[1:]))

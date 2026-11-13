@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from .main import Session, membership, owner
+from .deps import Session, membership, owner, user_limit
 from .request_body import read_limited_body
 from .settings import get_settings
 from .store import eq, service_request
@@ -317,7 +317,7 @@ def open_checkout(tenant: str, now: datetime) -> dict | None:
     return existing
 
 
-@router.post("/checkout")
+@router.post("/checkout", dependencies=[user_limit("billing-write", 10, 600)])
 async def checkout(tenant_id: UUID, data: CheckoutInput, auth: Session):
     await owner(tenant_id, auth[0])
     return await asyncio.to_thread(_checkout, tenant_id, data, auth)
@@ -399,7 +399,7 @@ def require_owner_plan(current: dict | None, plan: str) -> dict:
     return current
 
 
-@router.post("/upgrade")
+@router.post("/upgrade", dependencies=[user_limit("billing-write", 10, 600)])
 async def upgrade(tenant_id: UUID, auth: Session):
     """Pro -> Enterprise now; pay the prorated difference, keep the term end, top up credits."""
     await owner(tenant_id, auth[0])

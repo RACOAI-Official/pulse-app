@@ -5,7 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from .main import Session, dispatch, membership
+from .deps import Session, membership, user_limit
+from .main import dispatch
 from .store import eq, user_request
 from .tasks import send_public_comment_reply
 
@@ -77,7 +78,7 @@ async def comments(tenant_id: UUID, auth: Session) -> list[dict]:
     })
 
 
-@router.post("/comments/{comment_id}/reply")
+@router.post("/comments/{comment_id}/reply", dependencies=[user_limit("comment-reply", 60, 60)])
 async def reply_to_comment(tenant_id: UUID, comment_id: UUID, data: CommentReply, auth: Session) -> dict:
     await membership(tenant_id, auth[0])
     rows = await user_request("GET", "public_comments", auth[0], params={

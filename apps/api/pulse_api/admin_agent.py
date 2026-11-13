@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from .main import Session, membership
+from .deps import Session, membership, user_limit
 from .settings import get_settings
 from .store import eq, user_request
 
@@ -79,7 +79,7 @@ async def proposals(tenant_id: UUID, auth: Session) -> list[dict]:
     })
 
 
-@router.post("/propose")
+@router.post("/propose", dependencies=[user_limit("admin-agent", 20, 60)])
 async def propose(tenant_id: UUID, data: Prompt, auth: Session) -> dict:
     member = await membership(tenant_id, auth[0])
     if member["role"] not in ("owner", "manager"):

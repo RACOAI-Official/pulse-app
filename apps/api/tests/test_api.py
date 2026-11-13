@@ -6,7 +6,7 @@ from uuid import UUID
 import httpx
 import pytest
 
-from pulse_api import main
+from pulse_api import deps, main
 
 
 @pytest.mark.asyncio
@@ -20,8 +20,8 @@ async def test_membership_checks_current_user_row(monkeypatch):
         seen.update(kwargs["params"])
         return [{"tenant_id": "00000000-0000-0000-0000-000000000001", "user_id": "user-1", "role": "staff"}]
 
-    monkeypatch.setattr(main, "auth_user", fake_auth_user)
-    monkeypatch.setattr(main, "user_request", fake_user_request)
+    monkeypatch.setattr(deps, "auth_user", fake_auth_user)
+    monkeypatch.setattr(deps, "user_request", fake_user_request)
     result = await main.membership(UUID("00000000-0000-0000-0000-000000000001"), "token")
     assert result["role"] == "staff"
     assert seen["user_id"] == "eq.user-1"

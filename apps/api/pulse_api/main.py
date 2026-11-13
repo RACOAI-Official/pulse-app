@@ -15,51 +15,22 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .meta import extract_comments, extract_messages, verify_signature
+from .deps import Session, ip_limit, membership, owner, session, user_limit  # noqa: F401  (re-exported)
+from .ratelimit import client_ip, retry_after
 from .request_body import read_limited_body
 from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, extract_order, generate_reply, with_delivery
 from .settings import get_settings
-from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
+from .store import (StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path,
+                    tenant_owned_path, user_request)
 from .tasks import process_webhook, send_outbound
 
 logger = logging.getLogger(__name__)
 _docs = get_settings().pulse_api_docs
 app = FastAPI(title="Pulse API", version="0.1.0", docs_url="/docs" if _docs else None,
               redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[get_settings().pulse_web_origin],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
-)
 
 
-async def session(authorization: Annotated[str | None, Header()] = None) -> tuple[str, dict]:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Authentication required")
-    token = authorization.removeprefix("Bearer ")
-    return token, await auth_user(token)
 
-
-Session = Annotated[tuple[str, dict], Depends(session)]
-
-
-async def membership(tenant_id: UUID, token: str) -> dict:
-    user = await auth_user(token)
-    rows = await user_request("GET", "memberships", token, params={
-        "tenant_id": eq(str(tenant_id)), "user_id": eq(user["id"]),
-        "select": "tenant_id,user_id,role", "limit": "1",
-    })
-    if not rows:
-        raise HTTPException(404, "Tenant not found")
-    return rows[0]
-
-
-async def owner(tenant_id: UUID, token: str) -> dict:
-    member = await membership(tenant_id, token)
-    if member["role"] != "owner":
-        raise HTTPException(403, "Owner role required")
-    return member
 
 
 @app.middleware("http")
@@ -94,6 +65,34 @@ async def billing_access_gate(request: Request, call_next):
             except StoreError:
                 return JSONResponse(status_code=503, content={"detail": "Billing access could not be checked."})
     return await call_next(request)
+
+
+# Flood guard per client IP across the API. Inbox polling is ~8 requests/min per open tab, so this only trips on abuse.
+# Signed webhooks and OAuth redirects are exempt: Meta/Stripe deliver bursts from few IPs and verify cheaply.
+GLOBAL_IP_LIMIT, GLOBAL_IP_WINDOW = 1200, 60
+
+
+@app.middleware("http")
+async def ip_rate_limit(request: Request, call_next):
+    path = request.url.path
+    if request.method != "OPTIONS" and path != "/health" and not path.startswith(("/webhooks/", "/oauth/")):
+        wait = await retry_after(f"ip:{client_ip(request)}", GLOBAL_IP_LIMIT, GLOBAL_IP_WINDOW)
+        if wait:
+            return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again shortly."},
+                                headers={"Retry-After": str(wait)})
+    return await call_next(request)
+
+
+# Added last so it is the outermost layer: 402/429 from the middlewares above still carry CORS headers,
+# otherwise the browser hides the error detail behind a network failure.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[get_settings().pulse_web_origin],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Retry-After"],
+)
 
 
 @app.exception_handler(StoreError)
@@ -183,7 +182,7 @@ async def save_agent_draft(tenant_id: UUID, data: AgentDraft, auth: Session) -> 
     return {"draft_revision": revision, "tested_revision": 0}
 
 
-@app.post("/tenants/{tenant_id}/agent/test")
+@app.post("/tenants/{tenant_id}/agent/test", dependencies=[user_limit("agent-test", 20, 60)])
 async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> dict:
     await membership(tenant_id, auth[0])
     current = await asyncio.to_thread(config_for_tenant, str(tenant_id))
@@ -398,7 +397,7 @@ class ReplyBody(BaseModel):
     idempotency_key: UUID
 
 
-@app.post("/tenants/{tenant_id}/conversations/{conversation_id}/reply")
+@app.post("/tenants/{tenant_id}/conversations/{conversation_id}/reply", dependencies=[user_limit("reply", 60, 60)])
 async def reply(tenant_id: UUID, conversation_id: UUID, data: ReplyBody, auth: Session) -> dict:
     await conversation_for_user(tenant_id, conversation_id, auth[0])
     message_id = await user_request("POST", "rpc/pulse_create_human_reply", auth[0], body={
@@ -446,7 +445,7 @@ async def update_conversation(
     return rows[0]
 
 
-@app.post("/tenants/{tenant_id}/messages/{message_id}/retry")
+@app.post("/tenants/{tenant_id}/messages/{message_id}/retry", dependencies=[user_limit("retry", 30, 60)])
 async def retry_message(tenant_id: UUID, message_id: UUID, auth: Session) -> dict:
     await membership(tenant_id, auth[0])
     rows = await user_request("GET", "messages", auth[0], params={
@@ -472,7 +471,7 @@ class InviteBody(BaseModel):
                        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-@app.post("/tenants/{tenant_id}/invites")
+@app.post("/tenants/{tenant_id}/invites", dependencies=[user_limit("invite", 20, 3600)])
 async def invite_staff(tenant_id: UUID, data: InviteBody, auth: Session) -> dict:
     member = await membership(tenant_id, auth[0])
     if member["role"] != "owner":
@@ -497,7 +496,7 @@ async def media_url(tenant_id: UUID, message_id: UUID, media_index: int, auth: S
     if not rows or media_index < 0 or media_index >= len(rows[0]["media"]):
         raise HTTPException(404, "Media not found")
     path = rows[0]["media"][media_index].get("path")
-    if not path or not path.startswith(f"{tenant_id}/"):
+    if not tenant_owned_path(tenant_id, path):
         raise HTTPException(404, "Media unavailable")
     settings = get_settings()
     async with httpx.AsyncClient(timeout=10) as client:
@@ -574,7 +573,7 @@ async def receive_webhook(request: Request) -> dict:
     return {"accepted": accepted}
 
 
-@app.post("/tenants/{tenant_id}/ws-ticket")
+@app.post("/tenants/{tenant_id}/ws-ticket", dependencies=[user_limit("ws-ticket", 30, 60)])
 async def websocket_ticket(tenant_id: UUID, auth: Session) -> dict:
     await membership(tenant_id, auth[0])
     import secrets
@@ -588,7 +587,7 @@ async def websocket_ticket(tenant_id: UUID, auth: Session) -> dict:
 
 
 @app.websocket("/ws")
-async def websocket_updates(websocket: WebSocket, ticket: Annotated[str, Query()]) -> None:
+async def websocket_updates(websocket: WebSocket, ticket: Annotated[str, Query(max_length=64)]) -> None:
     if websocket.headers.get("origin") != get_settings().pulse_web_origin:
         await websocket.close(code=1008)
         return
