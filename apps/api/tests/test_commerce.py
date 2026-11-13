@@ -1,5 +1,6 @@
 """Commerce validation and authorization checks that do not need local Supabase."""
 
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
@@ -136,3 +137,38 @@ async def test_save_product_keeps_existing_handle_on_edit(monkeypatch):
     await commerce.save_product(TENANT, data, ("token", {"id": "u"}))
     body = calls[-1][2]["body"]
     assert body["p_handle"] == "old-handle" and body["p_variants"][0]["sku"] == "KEEP-1"
+
+
+@pytest.mark.asyncio
+async def test_product_list_attaches_signed_and_external_covers(monkeypatch):
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    rows = [{"title": "Tote", "handle": "tote", "media": [{"path": f"{tenant}/abc"}]},
+            {"title": "Clock", "handle": "clock", "media": [{"url": "https://cdn.example/clock.webp"}]},
+            {"title": "Vase", "handle": "vase", "media": []},
+            {"title": "Other", "handle": "other", "media": [{"path": "someone-else/abc"}]}]
+
+    async def fake_membership(*args):
+        return {"role": "owner"}
+
+    async def fake_user_request(*args, **kwargs):
+        return [dict(row) for row in rows]
+
+    seen = {}
+
+    def handler(request):
+        seen["body"] = __import__("json").loads(request.content)
+        return httpx.Response(200, json=[{"path": f"{tenant}/abc", "signedURL": "/object/sign/catalog-media/x?token=t"}])
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(commerce, "membership", fake_membership)
+    monkeypatch.setattr(commerce, "user_request", fake_user_request)
+    monkeypatch.setattr(commerce, "get_settings", lambda: SimpleNamespace(supabase_url="https://sb.example"))
+    monkeypatch.setattr(commerce, "service_headers", lambda *a: {})
+    monkeypatch.setattr(commerce.httpx, "AsyncClient",
+                        lambda **kwargs: real_client(transport=httpx.MockTransport(handler)))
+    result = await commerce.products(UUID(tenant), ("token", {"id": "user"}), q="")
+    covers = {row["handle"]: row["cover_url"] for row in result}
+    assert covers == {"tote": "https://sb.example/storage/v1/object/sign/catalog-media/x?token=t",
+                      "clock": "https://cdn.example/clock.webp", "vase": None, "other": None}
+    assert seen["body"] == {"expiresIn": 3600, "paths": [f"{tenant}/abc"]}

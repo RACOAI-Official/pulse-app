@@ -32,7 +32,7 @@ export default function Signup() {
     try {
       await publicApi("/auth/signup/start", { email, business_name: businessName });
       setStep("code"); setCooldown(60);
-      setNotice(`We sent a 6-digit code to ${email}.`);
+      setNotice(`We sent a 6-digit code to ${email}. It can take a minute to arrive; check Spam or Promotions if you don't see it.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not send the code");
     } finally { setBusy(false); }

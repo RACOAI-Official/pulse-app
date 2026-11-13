@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     mail_user: str = ""
     mail_pass: str = ""
     company_email_from: str = ""
+    resend_api_key: str = ""
     vision_url: str = ""
     vision_model: str = "Qdrant/Unicom-ViT-B-32"
     vision_match_threshold: float = 0.70

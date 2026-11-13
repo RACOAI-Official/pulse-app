@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Archive, FileUp, PackagePlus, RefreshCw, Trash2, X } from "@/components/icons";
+import { Archive, FileUp, Package, PackagePlus, RefreshCw, Trash2, X } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { api } from "@/lib/api";
 import { CommerceConfig, Currency, decimal, money, Product, toMinor } from "@/lib/commerce";
@@ -15,6 +15,32 @@ const MAX_IMAGES = 20;
 const emptyVariant = (): EditVariant => ({ sku: "", options: {}, regular: "0.00", offer: "", stock: "0" });
 const emptyProduct = (): EditProduct => ({ title: "", category: "", description: "", images: [], delivery: "", state: "draft", variants: [emptyVariant()] });
 const mediaKey = (media: MediaRef) => "path" in media ? media.path : media.url;
+const LOW_STOCK = 5;
+type StockFilter = "all" | "in_stock" | "low_stock" | "draft" | "archived";
+const filters: { id: StockFilter; label: string }[] = [
+  { id: "all", label: "All products" }, { id: "in_stock", label: "In stock" }, { id: "low_stock", label: "Low stock" },
+  { id: "draft", label: "Drafts" }, { id: "archived", label: "Archived" },
+];
+const liveVariants = (product: Product) => product.product_variants.filter(variant => variant.active);
+const unitsOf = (product: Product) => liveVariants(product).reduce((total, variant) => total + variant.stock, 0);
+function matchesFilter(product: Product, filter: StockFilter) {
+  const units = unitsOf(product);
+  if (filter === "draft" || filter === "archived") return product.state === filter;
+  if (filter === "in_stock") return product.state === "active" && units > 0;
+  if (filter === "low_stock") return product.state === "active" && units > 0 && units <= LOW_STOCK;
+  return true;
+}
+function stockBadge(product: Product): { text: string; tone: string } {
+  if (product.state !== "active") return { text: product.state === "draft" ? "Draft" : "Archived", tone: "muted" };
+  const units = unitsOf(product);
+  if (units <= 0) return { text: "Sold out", tone: "out" };
+  return { text: `${units} in stock`, tone: units <= LOW_STOCK ? "low" : "ok" };
+}
+function variantSummary(product: Product) {
+  const variants = liveVariants(product);
+  if (variants.length === 1) return Object.values(variants[0].options || {}).join(" · ") || product.category || "One option";
+  return variants.length ? `${variants.length} options` : "No options yet";
+}
 const columns = "product_key,title,category,description,sku,options,regular_price,offer_price,stock,image_urls,delivery_charge\n";
 
 function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | "manager" | "staff" }) {
@@ -22,6 +48,7 @@ function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | 
   const [config, setConfig] = useState<CommerceConfig | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<StockFilter>("all");
   const [editing, setEditing] = useState<EditProduct | null>(null);
   const [csvText, setCsvText] = useState("");
   const [preview, setPreview] = useState<{ sha256: string; product_count: number; variant_count: number; errors: { row: number; error: string }[] } | null>(null);
@@ -125,14 +152,25 @@ function CatalogContent({ tenantId, role }: { tenantId: string; role: "owner" | 
       setPreview(result);
     });
   }
-  const shown = products.filter(p => `${p.title} ${p.category}`.toLowerCase().includes(query.toLowerCase()));
+  const shown = products.filter(p => matchesFilter(p, filter) && `${p.title} ${p.category}`.toLowerCase().includes(query.toLowerCase()));
   return <main className="commerce-page">
     <header className="commerce-heading catalog-heading"><div><h1>Catalog</h1><p>Manage products, variants, images, and available stock.</p></div><button className="button primary" onClick={() => startEditing(emptyProduct())}><PackagePlus size={16} /> Add product</button></header>
     {notice && <p className="form-notice" role="status">{notice}</p>}
     <div className="catalog-overview">
     <section className="commerce-card catalog-list"><div className="commerce-section-head"><div><h2>Products <span className="count-pill">{products.length}</span></h2><p>Drafts stay hidden from order creation.</p></div><input aria-label="Search products" placeholder="Search catalog" value={query} onChange={e => setQuery(e.target.value)} /></div>
-      <div className="commerce-list">{shown.map(product => <article className="commerce-row" key={product.id}><div className="commerce-row-main"><strong>{product.title}</strong><small>{product.category || "Uncategorized"}</small><span className={`commerce-state ${product.state}`}>{product.state}</span></div><div className="commerce-row-meta"><strong>{product.product_variants.filter(v => v.active).length} variants</strong><small>{product.product_variants.reduce((total, v) => total + v.stock, 0)} units, {money(Math.min(...product.product_variants.map(v => v.offer_price_minor ?? v.regular_price_minor)), config?.currency || "BDT")} from</small></div><button className="button subtle" onClick={() => openProduct(product)}>Edit</button>{product.state === "archived" ? <button className="button subtle" disabled={busy} onClick={() => run(async () => { await api(`${base}/products/${product.id}/restore`, { method: "POST" }); })}><RefreshCw size={14} /> Restore</button> : <button className="button subtle" disabled={busy} title="Delete if unused, archive if ordered" onClick={() => { if (window.confirm(`Remove ${product.title}? Unused products are deleted; ordered products are archived.`)) run(async () => { await api(`${base}/products/${product.id}/remove`, { method: "POST" }); }); }}><Archive size={14} /> Remove</button>}</article>)}
-        {!shown.length && <p className="commerce-empty">No products match this search.</p>}</div>
+      <div className="stock-filters" role="group" aria-label="Filter products">{filters.map(item => <button key={item.id} type="button" className={filter === item.id ? "selected" : ""} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
+      <div className="product-grid">{shown.map(product => {
+        const badge = stockBadge(product);
+        const prices = liveVariants(product).map(v => v.offer_price_minor ?? v.regular_price_minor);
+        return <article className={`product-card ${product.state}`} key={product.id}>
+          <button type="button" className="product-card-open" onClick={() => openProduct(product)} aria-label={`Edit ${product.title}`}>
+            <span className="product-card-media">{product.cover_url ? <img src={product.cover_url} alt="" loading="lazy" /> : <span className="product-card-placeholder"><Package size={30} /></span>}<span className={`product-card-badge ${badge.tone}`}>{badge.text}</span></span>
+            <span className="product-card-body"><strong>{product.title}</strong><span className="product-card-meta"><small>{variantSummary(product)}</small><b>{prices.length ? money(Math.min(...prices), config?.currency || "BDT") : "—"}</b></span></span>
+          </button>
+          <span className="product-card-tools">{product.state === "archived" ? <button className="product-card-action" disabled={busy} onClick={() => run(async () => { await api(`${base}/products/${product.id}/restore`, { method: "POST" }); })}><RefreshCw size={14} /> Restore</button> : <button className="product-card-action" disabled={busy} title="Delete if unused, archive if ordered" onClick={() => { if (window.confirm(`Remove ${product.title}? Unused products are deleted; ordered products are archived.`)) run(async () => { await api(`${base}/products/${product.id}/remove`, { method: "POST" }); }); }}><Archive size={14} /> Remove</button>}</span>
+        </article>;
+      })}</div>
+      {!shown.length && <p className="commerce-empty">{products.length ? "No products match this filter." : "No products yet. Add your first product."}</p>}
     </section>
     <section className="commerce-card commerce-config catalog-currency"><div><h2>Store currency</h2><p>Prices use one currency across this workspace. It locks after the first product or order.</p></div>
       <select aria-label="Store currency" value={config?.currency || "BDT"} disabled={!config || config.currency_locked || role !== "owner" || busy} onChange={event => run(async () => { await api(`${base}/currency`, { method: "POST", body: JSON.stringify({ currency: event.target.value }) }); })}>

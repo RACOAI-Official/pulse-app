@@ -11,7 +11,7 @@ This index records what is in the repository on `dev/init` as of 18 October 2026
 
 ## Shared architecture and operations
 
-Next.js/React renders the workspace and uses Supabase Auth. FastAPI validates the bearer session and forwards user-scoped reads to PostgREST so row-level security applies. PostgreSQL functions guard state transitions; service credentials stay with the API and worker. Redis/Celery processes persisted webhook, outbound, and agent jobs; beat reconciles work after broker failures. Caddy and Docker Compose describe the intended two-host staging deployment. The [README](../../README.md) has local setup, environment variables, staging, and commands. Tests live under `apps/api/tests`; the Messenger sandbox round trip passed on 18 October 2026.
+Next.js/React renders the workspace and uses Supabase Auth. FastAPI validates the bearer session and forwards user-scoped reads to PostgREST so row-level security applies. PostgreSQL functions guard state transitions; service credentials stay with the API and worker. Redis/Celery processes persisted webhook, outbound, and agent jobs; beat reconciles work after broker failures. Docker Compose and the host nginx config in `deploy/nginx/` describe the two-host staging deployment. The [README](../../README.md) has local setup, environment variables, staging, and commands. Tests live under `apps/api/tests`; the Messenger sandbox round trip passed on 18 October 2026.
 
 ## What remains before sandbox acceptance
 

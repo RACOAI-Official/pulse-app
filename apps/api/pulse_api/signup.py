@@ -6,14 +6,12 @@ import hmac
 import logging
 import re
 import secrets
-import smtplib
-import ssl
-from email.message import EmailMessage
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from .emails import send, signup_code
 from .settings import get_settings
 from .store import StoreError, service_auth_request, service_request
 
@@ -64,30 +62,8 @@ def _digest(email: str, code: str) -> str:
 
 
 def send_code_email(to: str, code: str) -> None:
-    settings = get_settings()
-    if not settings.mail_host or not settings.mail_user or not settings.mail_pass:
-        raise RuntimeError("SMTP is not configured")
-    message = EmailMessage()
-    message["Subject"] = f"{code} is your Pulse sign-up code"
-    message["From"] = settings.company_email_from or settings.mail_user
-    message["To"] = to
-    message.set_content(f"Your Pulse sign-up code is {code}.\n\nIt expires in 10 minutes. "
-                        "If you didn't request this, ignore this email.")
-    message.add_alternative(
-        "<div style=\"font-family:sans-serif;max-width:420px\"><p>Your Pulse sign-up code is</p>"
-        f"<p style=\"font-size:32px;font-weight:700;letter-spacing:6px;margin:16px 0\">{code}</p>"
-        "<p style=\"color:#666\">It expires in 10 minutes. If you didn't request this, ignore this email.</p></div>",
-        subtype="html")
-    context = ssl.create_default_context()
-    if settings.mail_port == 465:
-        with smtplib.SMTP_SSL(settings.mail_host, settings.mail_port, context=context, timeout=20) as smtp:
-            smtp.login(settings.mail_user, settings.mail_pass)
-            smtp.send_message(message)
-    else:
-        with smtplib.SMTP(settings.mail_host, settings.mail_port, timeout=20) as smtp:
-            smtp.starttls(context=context)
-            smtp.login(settings.mail_user, settings.mail_pass)
-            smtp.send_message(message)
+    transport = send(to, *signup_code(code))
+    logger.info("Sign-up code sent via %s", transport)
 
 
 @router.post("/start")

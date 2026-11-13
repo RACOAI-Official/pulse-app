@@ -145,6 +145,9 @@ class AgentDraft(BaseModel):
     policies: list[AgentFact] = Field(default_factory=list, max_length=30)
     faqs: list[AgentFaq] = Field(default_factory=list, max_length=100)
     media_reply: str = Field(default=DEFAULT_DRAFT["media_reply"], min_length=1, max_length=500)
+    language_v2: bool = False
+    media_reply_bangla: str = Field(default="", max_length=500)
+    media_reply_english: str = Field(default="", max_length=500)
 
 
 class TestTurn(BaseModel):
@@ -189,16 +192,22 @@ async def test_agent(tenant_id: UUID, data: AgentTestRequest, auth: Session) -> 
         facts = await asyncio.to_thread(catalog_facts, str(tenant_id), context)
         config = await asyncio.to_thread(with_delivery, draft, str(tenant_id))
         answer = await asyncio.to_thread(generate_reply, config, data.prompt, facts, history)
-        proposal = extract_order(answer)
-        if proposal:
-            # Test runs never touch real orders or stock; show what would have been placed.
-            items = ", ".join(f"{item['sku']} x{item['quantity']}" for item in proposal["items"])
-            answer = (f"[Test mode: draft order would be created] {items}; "
-                      f"{proposal['customer_name']}, {proposal['customer_phone']}, "
-                      f"{proposal['delivery_address']}")
-    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+    except (httpx.HTTPError, RuntimeError) as exc:
         logger.warning("Agent test unavailable for tenant %s: %s", tenant_id, type(exc).__name__)
-        raise HTTPException(503, "Local model unavailable. Check endpoint and model configuration") from exc
+        raise HTTPException(503, "The AI model is not reachable right now. Try again in a moment.") from exc
+    except ValueError as exc:
+        logger.warning("Agent test got an unusable reply for tenant %s: %s", tenant_id, exc)
+        raise HTTPException(502, "The AI gave an unusable reply. Try again.") from exc
+    try:
+        proposal = extract_order(answer)
+    except ValueError:
+        proposal = None  # A malformed order line still shows the model's text instead of failing the test.
+    if proposal:
+            # Test runs never touch real orders or stock; show what would have been placed.
+        items = ", ".join(f"{item['sku']} x{item['quantity']}" for item in proposal["items"])
+        answer = (f"[Test mode: draft order would be created] {items}; "
+                  f"{proposal['customer_name']}, {proposal['customer_phone']}, "
+                  f"{proposal['delivery_address']}")
     await user_request("POST", "agent_test_runs", auth[0], body={
         "tenant_id": str(tenant_id), "user_id": auth[1]["id"],
         "prompt": data.prompt, "response": answer,

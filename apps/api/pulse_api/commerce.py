@@ -165,8 +165,40 @@ async def products(tenant_id: UUID, auth: Session, q: str = Query("", max_length
         "order": "updated_at.desc", "limit": "500",
     })
     needle = q.casefold().strip()
-    return [row for row in rows if not needle or needle in row["title"].casefold()
+    rows = [row for row in rows if not needle or needle in row["title"].casefold()
             or needle in row["handle"].casefold()]
+    await _attach_covers(str(tenant_id), rows)
+    return rows
+
+
+async def _attach_covers(tenant_id: str, rows: list[dict]) -> None:
+    """Give each product a short-lived `cover_url` from its first photo, signed in one storage call."""
+    paths: dict[str, list[dict]] = {}
+    for row in rows:
+        cover = (row.get("media") or [None])[0]
+        row["cover_url"] = None
+        if isinstance(cover, dict) and isinstance(cover.get("url"), str):
+            row["cover_url"] = cover["url"]
+        elif isinstance(cover, dict) and str(cover.get("path", "")).startswith(f"{tenant_id}/"):
+            paths.setdefault(cover["path"], []).append(row)
+    if not paths:
+        return
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{settings.supabase_url}/storage/v1/object/sign/catalog-media",
+                headers=service_headers(), json={"expiresIn": 3600, "paths": list(paths)},
+            )
+        response.raise_for_status()
+        signed = response.json()
+    except (httpx.HTTPError, ValueError):
+        return  # Cards fall back to a placeholder; the list itself must still load.
+    for item in signed if isinstance(signed, list) else []:
+        url = item.get("signedURL") if isinstance(item, dict) else None
+        for row in paths.get(item.get("path", "") if isinstance(item, dict) else "", []):
+            if url:
+                row["cover_url"] = f"{settings.supabase_url}/storage/v1{url}"
 
 
 def _auto_handle(title: str) -> str:

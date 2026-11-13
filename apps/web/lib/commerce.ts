@@ -23,6 +23,8 @@ export interface Product {
   state: ProductState;
   product_variants: Variant[];
   updated_at: string;
+  /** Short-lived signed link to the first photo, added by the product list. */
+  cover_url?: string | null;
 }
 
 export interface CommerceConfig { currency: Currency; currency_locked: boolean }

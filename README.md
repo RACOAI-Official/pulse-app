@@ -7,7 +7,7 @@ Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, ver
 - Next.js 16, React 19, Supabase Auth
 - FastAPI, Redis/Celery, Meta Graph APIs, and a configurable OpenAI-compatible local model endpoint
 - Supabase Postgres with tenant row-level security and private Storage
-- Docker Compose and Caddy for staging
+- Docker Compose behind host nginx for staging
 
 ## Local setup
 
@@ -38,11 +38,11 @@ Pulse combines a three-channel Meta sandbox inbox, local commerce workspace, ver
 
 ## Marketing site
 
-`apps/landing` is the public website served at the root of the app host (`https://pulse.racoai.io/`). It is a standalone Next.js app with no dependency on the API, Supabase, or `apps/web`; work on it alone with `npm ci && npm run dev` in `apps/landing` (http://localhost:3001). Its bundles are served under `/landing-assets`, and the Caddyfile routes `/`, `/landing-assets/*`, `/media/*`, `/brand-mark.svg` and `/icon.svg` to the `landing` service; every other path goes to `apps/web`. The navbar "Try Pulse" button links to `/login`. Copy and links live in `apps/landing/content/pulse.ts`.
+`apps/landing` is the public website served at the root of the app host (`https://pulse.racoai.io/`). It is a standalone Next.js app with no dependency on the API, Supabase, or `apps/web`; work on it alone with `npm ci && npm run dev` in `apps/landing` (http://localhost:3001). Its bundles are served under `/landing-assets`, and nginx routes `/`, `/landing-assets/*`, `/media/*`, `/brand-mark.svg` and `/icon.svg` to the `landing` service (`127.0.0.1:13001`); every other path goes to `apps/web` (`127.0.0.1:13000`). See `deploy/nginx/pulse.racoai.io.conf`. The navbar "Try Pulse" button links to `/login`. Copy and links live in `apps/landing/content/pulse.ts`.
 
 ## Staging
 
-The approved target is an Ubuntu 22.04 VPS with two HTTPS hostnames. Fill `.env` with the remote Supabase project keys, `PULSE_APP_HOST`, `PULSE_API_HOST`, `PULSE_WEB_ORIGIN=https://<app-host>`, and the three `NEXT_PUBLIC_*` values. The existing `SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` settings accept a new `sb_publishable_` key; `SUPABASE_SERVICE_ROLE_KEY` accepts a server-only `sb_secret_` key. Never put the secret key in a `NEXT_PUBLIC_*` variable. Configure the Supabase Auth site URL and allowed redirect URL as `https://<app-host>/auth/callback`. Apply pending migrations with the Supabase CLI, then run `docker compose up -d --build` on the VPS. Point both DNS records at the VPS before expecting Caddy certificates.
+The approved target is an Ubuntu 22.04 VPS with two HTTPS hostnames. Fill `.env` with the remote Supabase project keys, `PULSE_WEB_ORIGIN=https://<app-host>`, and the three `NEXT_PUBLIC_*` values. Put the sign-up email settings (`MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASS`, `COMPANY_EMAIL_FROM`) in `apps/api/.env` on the VPS; without them sign-up fails with "Could not send the email". The existing `SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` settings accept a new `sb_publishable_` key; `SUPABASE_SERVICE_ROLE_KEY` accepts a server-only `sb_secret_` key. Never put the secret key in a `NEXT_PUBLIC_*` variable. Configure the Supabase Auth site URL and allowed redirect URL as `https://<app-host>/auth/callback`. Apply pending migrations with the Supabase CLI, then run `docker compose up -d --build` on the VPS. Compose publishes the services on loopback only (web `13000`, landing `13001`, API `18080`); the host nginx terminates HTTPS (Certbot certificates) and proxies to them. The live site config is kept in `deploy/nginx/pulse.racoai.io.conf`: copy it to `/etc/nginx/sites-available/`, run `sudo nginx -t`, then `sudo systemctl reload nginx`. Point both DNS records at the VPS before running Certbot.
 
 Meta webhook callback: `https://<api-host>/webhooks/meta`. Set the same verify token in Meta and `.env`, configure the three channel subscriptions, and connect each sandbox asset with the operator CLI. Instagram uses Instagram Login directly. A real inbound and one human text reply must succeed on all three channels before staging acceptance. Meta app review and broader production messaging permissions are separate from sandbox acceptance.
 

@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Check, CheckCheck, CircleAlert, Image as ImageIcon, LoaderCircle, MessageSquare, RefreshCw, Search, Send, SlidersHorizontal } from "@/components/icons";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowUpRight, Check, CheckCheck, CircleAlert, Image as ImageIcon, LoaderCircle, MessageSquare, RefreshCw, Search, Send, SlidersHorizontal } from "@/components/icons";
 import WorkspaceShell from "@/components/WorkspaceShell";
+import ChannelIcon from "@/components/ChannelIcon";
 import Link from "next/link";
 import { CommentsInbox, OrdersInbox, TicketsInbox, UnrepliedInbox } from "@/components/InboxExtraViews";
 import { api, Conversation, InboxMedia, Message, websocketBase } from "@/lib/api";
@@ -16,6 +17,15 @@ function clock(date: string) {
 function shortDate(date: string) {
   const value = new Date(date);
   return value.toDateString() === new Date().toDateString() ? clock(date) : value.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function initials(name: string) {
+  const [first = name, second] = name.match(/\p{L}+/gu) || [];
+  return (second ? first.charAt(0) + second.charAt(0) : first.slice(0, 2)).toUpperCase();
+}
+function CustomerAvatar({ conversation }: { conversation: Conversation }) {
+  const name = customerLabel(conversation);
+  const tint = [...name].reduce((total, char) => total + char.charCodeAt(0), 0) % 5;
+  return <span className={`avatar-initials tint-${tint}`} aria-hidden="true">{initials(name)}<span className="avatar-badge"><ChannelIcon channel={conversation.channel} size={15} /></span></span>;
 }
 function customerLabel(conversation: Conversation) {
   return conversation.customer_name?.trim() || `Customer / ${conversation.external_thread_id.slice(-4)}`;
@@ -56,6 +66,7 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
   const conversationRequest = useRef(0);
   const messageRequest = useRef(0);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const renderedThread = useRef("");
   const scrollOnUpdate = useRef(true);
   const selected = useMemo(() => conversations.find(item => item.id === selectedId), [conversations, selectedId]);
@@ -100,6 +111,13 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
   useEffect(() => {
     if (scrollOnUpdate.current && timelineRef.current) timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
   }, [messages]);
+  useLayoutEffect(() => {
+    const reply = replyRef.current;
+    if (!reply) return;
+    reply.style.height = "auto";
+    reply.style.height = `${Math.min(reply.scrollHeight, 84)}px`;
+    reply.style.overflowY = reply.scrollHeight > 84 ? "auto" : "hidden";
+  }, [draft]);
   useEffect(() => {
     if (mobileThreadOpen && timelineRef.current) timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
   }, [mobileThreadOpen, selectedId]);
@@ -197,22 +215,22 @@ function InboxContent({ tenantId, focusId }: { tenantId: string; focusId: string
         <div className="search-field"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search conversations" aria-label="Search conversations" /></div>
         <div className="filter-row"><SlidersHorizontal size={16} /><select aria-label="Conversation state" value={state} onChange={e => setState(e.target.value as typeof state)}><option value="all">All states</option><option value="open">Open</option><option value="resolved">Resolved</option></select></div>
       </div>
-      <div className="channel-tabs" role="group" aria-label="Channel filter">{channels.map(item => <button key={item} className={channel === item ? "selected" : ""} onClick={() => setChannel(item)}>{item === "all" ? "All" : item === "whatsapp" ? "WhatsApp" : item === "instagram" ? "Instagram" : "Messenger"}</button>)}</div>
+      <div className="channel-tabs" role="group" aria-label="Channel filter">{channels.map(item => <button key={item} className={`channel-pill ${channel === item ? "selected" : ""}`} aria-pressed={channel === item} onClick={() => setChannel(item)}>{item !== "all" && <ChannelIcon channel={item} size={16} />}{item === "all" ? "All" : labels[item]}</button>)}</div>
       <div className="conversation-list">{loading ? <div className="list-empty">Loading conversations…</div> : conversations.length === 0 ? <div className="list-empty"><MessageSquare size={28} /><strong>{filtered ? "No matching conversations" : "No conversations yet"}</strong><span>{filtered ? "Try another search or clear your filters." : "Messages from connected channels will appear here."}</span></div> : conversations.map(item => <button key={item.id} className={`conversation-card ${item.id === selectedId ? "selected" : ""}`} onClick={() => { setSelectedId(item.id); setMobileThreadOpen(true); }}>
-        <span className={`channel-avatar ${item.channel}`}>{item.channel === "whatsapp" ? "W" : item.channel === "instagram" ? "I" : "M"}</span>
-        <span className="conversation-summary"><span className="conversation-card-top"><strong title={item.external_thread_id}>{customerLabel(item)}</strong><small>{shortDate(item.last_message_at)}</small></span><span className="conversation-card-bottom"><span>{labels[item.channel]} / {item.state === "resolved" ? "Resolved" : "Open"}</span>{item.unread_count > 0 && <b>{item.unread_count}</b>}</span></span>
+        <CustomerAvatar conversation={item} />
+        <span className="conversation-summary"><span className="conversation-card-top"><strong title={item.external_thread_id}>{customerLabel(item)}</strong><small>{shortDate(item.last_message_at)}</small></span><span className="conversation-card-bottom"><span className="channel-line"><ChannelIcon channel={item.channel} size={13} />{labels[item.channel]} / {item.state === "resolved" ? "Resolved" : "Open"}</span>{item.unread_count > 0 && <b>{item.unread_count}</b>}</span></span>
       </button>)}</div>
       <div className="panel-foot"><span className="live-dot" /> Live inbox <span>·</span> Human replies</div>
     </section>
     <section className="thread-panel">{selected ? <>
-      <header className="thread-header"><button className="icon-button thread-back" aria-label="Back to conversations" onClick={() => setMobileThreadOpen(false)}><ArrowLeft size={18} /></button><div className="thread-identity"><span className={`channel-avatar ${selected.channel}`}>{selected.channel === "whatsapp" ? "W" : selected.channel === "instagram" ? "I" : "M"}</span><div><strong title={selected.external_thread_id}>{customerLabel(selected)}</strong><span>{labels[selected.channel]} / {selected.responder === "human" ? "Human takeover" : "AI available"}</span></div></div><div className="thread-actions"><Link className="button subtle" href={`/orders?conversation_id=${selected.id}`}>Create order</Link><button className="button subtle" onClick={createTicket}>Create ticket</button><button className="button subtle" onClick={toggleResponder}>{selected.responder === "ai" ? "Take over" : "Return to AI"}</button><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></div></header>
+      <header className="thread-header"><button className="icon-button thread-back" aria-label="Back to conversations" onClick={() => setMobileThreadOpen(false)}><ArrowLeft size={18} /></button><div className="thread-identity"><CustomerAvatar conversation={selected} /><div><strong title={selected.external_thread_id}>{customerLabel(selected)}<ChannelIcon channel={selected.channel} size={17} className="thread-channel-icon" title /></strong><span>{labels[selected.channel]} / {selected.responder === "human" ? "Human takeover" : "AI available"}</span></div></div><div className="thread-actions"><Link className="button subtle" href={`/orders?conversation_id=${selected.id}`}>Create order</Link><button className="button subtle" onClick={createTicket}>Create ticket</button><button className="button subtle" onClick={toggleResponder}>{selected.responder === "ai" ? "Take over" : "Return to AI"}</button><button className="button subtle" onClick={toggleState}>{selected.state === "open" ? <><Check size={16} /> Resolve</> : <><ArrowUpRight size={16} /> Reopen</>}</button></div></header>
       <div className="thread-timeline" ref={timelineRef}><div className="thread-start"><span>CONVERSATION STARTED</span><i /></div>{messages.map(message => <article key={message.id} className={`bubble-row ${message.direction === "outbound" ? "outbound" : "inbound"}`}><div className="message-bubble">
         {message.body && <p>{message.body}</p>}
         {message.media.map((item, index) => <MediaView key={index} tenantId={tenantId} messageId={message.id} index={index} item={item} />)}
         <div className="bubble-meta"><span>{message.sender_type === "human" ? "Team" : message.sender_type === "ai" ? "Pulse AI" : message.sender_type === "system" ? "Pulse" : "Customer"} / {clock(message.created_at)}</span>{message.delivery_state === "sent" ? <CheckCheck size={14} /> : message.delivery_state === "queued" || message.delivery_state === "sending" ? <LoaderCircle size={13} /> : null}</div>
         {(message.delivery_state === "failed" || message.delivery_state === "uncertain") && <div className="delivery-error"><CircleAlert size={14} /><span>{message.delivery_state === "uncertain" ? "Delivery uncertain — check the channel before another reply." : message.failure_reason || "Send failed"}</span>{message.delivery_state === "failed" && <button onClick={() => retry(message.id)}>Retry</button>}</div>}
       </div></article>)}</div>
-      <div className="composer-wrap">{error && <div className="inbox-error" role="alert">{error}</div>}<form className="composer" onSubmit={send}><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder="Write a reply to this customer…" aria-label="Reply" maxLength={1000} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} /><div className="composer-bottom"><span><ArrowDownLeft size={14} /> Human reply / {draft.length}/1000</span><button type="submit" className="button primary" disabled={busy || !draft.trim()}>{busy ? "Queuing…" : "Send reply"}<Send size={16} /></button></div></form></div>
+      <div className="composer-wrap">{error && <div className="inbox-error" role="alert">{error}</div>}<form className="composer" onSubmit={send}><textarea ref={replyRef} rows={1} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Write a reply to this customer…" aria-label="Reply" maxLength={1000} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} /><span className="composer-count" aria-live="off">{draft.length}/1000</span><button type="submit" className="button primary" disabled={busy || !draft.trim()}>{busy ? "Queuing…" : "Send reply"}<Send size={16} /></button></form></div>
     </> : <div className="thread-empty"><div className="empty-orbit"><MessageSquare size={29} /></div><h2>{filtered ? "No thread selected." : "Every reply starts here."}</h2><p>{filtered ? "Clear the search or filters to see your conversations." : "Select a conversation, or connect a channel and send a test message to begin."}</p></div>}</section>
   </div>;
 }
