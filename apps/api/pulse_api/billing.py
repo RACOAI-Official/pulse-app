@@ -5,6 +5,7 @@ USD/GBP go through Stripe as auto-renewing subscriptions; BDT goes through SSLCO
 prepaid terms. Gateway notifications are verified with the provider before access changes.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -162,6 +163,10 @@ def upgrade_quote(current: dict, now: datetime | None = None) -> int:
 @router.get("")
 async def status(tenant_id: UUID, auth: Session):
     await membership(tenant_id, auth[0])
+    return await asyncio.to_thread(_status, tenant_id, auth)
+
+
+def _status(tenant_id: UUID, auth: tuple[str, dict]):
     tenant = str(tenant_id)
     settings = get_settings()
     invoices = rows("billing_invoices", tenant_id=eq(tenant),
@@ -315,6 +320,10 @@ def open_checkout(tenant: str, now: datetime) -> dict | None:
 @router.post("/checkout")
 async def checkout(tenant_id: UUID, data: CheckoutInput, auth: Session):
     await owner(tenant_id, auth[0])
+    return await asyncio.to_thread(_checkout, tenant_id, data, auth)
+
+
+def _checkout(tenant_id: UUID, data: CheckoutInput, auth: tuple[str, dict]):
     tenant = str(tenant_id)
     provider = provider_for(data.currency)
     if not providers()[provider]:
@@ -394,6 +403,10 @@ def require_owner_plan(current: dict | None, plan: str) -> dict:
 async def upgrade(tenant_id: UUID, auth: Session):
     """Pro -> Enterprise now; pay the prorated difference, keep the term end, top up credits."""
     await owner(tenant_id, auth[0])
+    return await asyncio.to_thread(_upgrade, tenant_id, auth)
+
+
+def _upgrade(tenant_id: UUID, auth: tuple[str, dict]):
     tenant = str(tenant_id)
     current = require_owner_plan(account(tenant), "pro")
     interval, currency = current["billing_interval"], current["currency_code"]
@@ -440,6 +453,10 @@ async def upgrade(tenant_id: UUID, auth: Session):
 async def downgrade(tenant_id: UUID, auth: Session):
     """Enterprise -> Pro at the next renewal; the current term keeps Enterprise."""
     await owner(tenant_id, auth[0])
+    return await asyncio.to_thread(_downgrade, tenant_id, auth)
+
+
+def _downgrade(tenant_id: UUID, auth: tuple[str, dict]):
     tenant = str(tenant_id)
     current = require_owner_plan(account(tenant), "enterprise")
     if current["provider"] == "stripe":
@@ -587,7 +604,11 @@ def verify_stripe_event(raw: bytes, signature: str) -> dict:
 @webhooks.post("/webhooks/billing/stripe")
 async def stripe_webhook(request: Request):
     raw = await read_limited_body(request, 128 * 1024, "Stripe event is too large")
-    event = verify_stripe_event(raw, request.headers.get("stripe-signature", ""))
+    return await asyncio.to_thread(_stripe_webhook, raw, request.headers.get("stripe-signature", ""))
+
+
+def _stripe_webhook(raw: bytes, signature: str) -> dict:
+    event = verify_stripe_event(raw, signature)
     event_id = event.get("id", "")
     if not event_id:
         raise HTTPException(400, "Stripe event ID missing")
@@ -652,7 +673,11 @@ def validate_ssl_payment(checkout: dict, val_id: str) -> dict:
 @webhooks.post("/webhooks/billing/sslcommerz")
 async def ssl_webhook(request: Request):
     raw = await read_limited_body(request, 8192, "SSLCOMMERZ event is too large")
-    path = RETURN_PATHS.get(request.query_params.get("to", "plan"), RETURN_PATH)
+    return await asyncio.to_thread(_ssl_webhook, raw, dict(request.query_params))
+
+
+def _ssl_webhook(raw: bytes, query: dict[str, str]):
+    path = RETURN_PATHS.get(query.get("to", "plan"), RETURN_PATH)
     back = RedirectResponse(get_settings().pulse_web_origin + path + "?return=check", status_code=303)
     try:
         fields = {key: values[0] for key, values in parse_qs(raw.decode(), keep_blank_values=True).items()}
@@ -660,7 +685,7 @@ async def ssl_webhook(request: Request):
         raise HTTPException(400, "Invalid gateway event") from exc
     transaction, val_id = fields.get("tran_id", ""), fields.get("val_id", "")
     if not transaction or not val_id:
-        if request.query_params.get("return") == "1":
+        if query.get("return") == "1":
             return back
         raise HTTPException(400, "Payment validation ID missing")
     found = rows("billing_checkouts", merchant_transaction_id=eq(transaction),
@@ -672,7 +697,7 @@ async def ssl_webhook(request: Request):
         state = checkout["state"]
     else:
         state = validate_ssl_payment(checkout, val_id)["state"]
-    if request.query_params.get("return") == "1":
+    if query.get("return") == "1":
         return back
     return {"status": state}
 
@@ -710,6 +735,10 @@ def reconcile() -> None:
 async def cancel(tenant_id: UUID, auth: Session):
     """Stop Stripe renewal at period end. SSLCOMMERZ terms are prepaid and simply lapse."""
     await owner(tenant_id, auth[0])
+    return await asyncio.to_thread(_cancel, tenant_id, auth)
+
+
+def _cancel(tenant_id: UUID, auth: tuple[str, dict]):
     current = account(str(tenant_id))
     if not current or not current.get("stripe_subscription_id"):
         raise HTTPException(409, "No Stripe subscription to cancel")
@@ -724,6 +753,10 @@ async def cancel(tenant_id: UUID, auth: Session):
 @router.post("/auto-renew")
 async def set_auto_renew(tenant_id: UUID, enabled: bool, auth: Session):
     await owner(tenant_id, auth[0])
+    return await asyncio.to_thread(_set_auto_renew, tenant_id, enabled, auth)
+
+
+def _set_auto_renew(tenant_id: UUID, enabled: bool, auth: tuple[str, dict]):
     current = account(str(tenant_id))
     if not is_active(current) or not current.get("stripe_subscription_id"):
         raise HTTPException(409, "An active Stripe subscription is required")

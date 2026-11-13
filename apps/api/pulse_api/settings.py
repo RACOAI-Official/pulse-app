@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     meta_whatsapp_config_id: str = ""
     instagram_app_id: str = ""
     pulse_echo_mode: bool = False
+    # Interactive API docs (/docs, /redoc, /openapi.json); set PULSE_API_DOCS=false in production.
+    pulse_api_docs: bool = True
     pulse_llm_chat_url: str = ""
     pulse_llm_model: str = ""
     pulse_llm_api_key: str = ""

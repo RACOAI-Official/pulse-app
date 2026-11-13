@@ -1,5 +1,6 @@
 """Authenticated admin proposals. Model output is only a candidate; SQL validates every write."""
 
+import asyncio
 import json
 import re
 from uuid import UUID
@@ -89,7 +90,7 @@ async def propose(tenant_id: UUID, data: Prompt, auth: Session) -> dict:
     })
     catalog = [{"title": item["title"], "skus": [variant["sku"] for variant in item["product_variants"]]}
                for item in products]
-    intent = _model_intent(data.prompt, catalog)
+    intent = await asyncio.to_thread(_model_intent, data.prompt, catalog)
     action = intent.pop("action")
     if action == "add_faq" and member["role"] != "owner":
         raise HTTPException(403, "Only owners can change agent knowledge")
