@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import re
@@ -14,13 +15,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .meta import extract_comments, extract_messages, verify_signature
+from .request_body import read_limited_body
 from .agent import DEFAULT_DRAFT, catalog_facts, config_for_tenant, extract_order, generate_reply, with_delivery
 from .settings import get_settings
 from .store import StoreError, auth_user, eq, service_auth_request, service_headers, service_request, storage_path, user_request
 from .tasks import process_webhook, send_outbound
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Pulse API", version="0.1.0")
+_docs = get_settings().pulse_api_docs
+app = FastAPI(title="Pulse API", version="0.1.0", docs_url="/docs" if _docs else None,
+              redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().pulse_web_origin],
@@ -85,7 +89,7 @@ async def billing_access_gate(request: Request, call_next):
                 return JSONResponse(status_code=503, content={"detail": "Workspace access could not be checked."})
             from .billing import has_access
             try:
-                if not has_access(str(tenant_id)):
+                if not await asyncio.to_thread(has_access, str(tenant_id)):
                     return JSONResponse(status_code=402, content={"detail": "Subscription required. Open Plan to continue."})
             except StoreError:
                 return JSONResponse(status_code=503, content={"detail": "Billing access could not be checked."})
@@ -511,8 +515,8 @@ async def media_url(tenant_id: UUID, message_id: UUID, media_index: int, auth: S
 @app.get("/webhooks/meta")
 async def verify_webhook(request: Request):
     params = request.query_params
-    if params.get("hub.mode") != "subscribe" or \
-       params.get("hub.verify_token") != get_settings().meta_verify_token:
+    if params.get("hub.mode") != "subscribe" or not hmac.compare_digest(
+            params.get("hub.verify_token") or "", get_settings().meta_verify_token):
         raise HTTPException(403, "Webhook verification failed")
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(params.get("hub.challenge") or "")
@@ -520,11 +524,9 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhooks/meta")
 async def receive_webhook(request: Request) -> dict:
-    raw = await request.body()
+    raw = await read_limited_body(request, 1024 * 1024, "Webhook too large")
     if not verify_signature(raw, request.headers.get("x-hub-signature-256")):
         raise HTTPException(403, "Invalid Meta signature")
-    if len(raw) > 1024 * 1024:
-        raise HTTPException(413, "Webhook too large")
     try:
         payload = json.loads(raw)
         incoming = extract_messages(payload)
@@ -586,7 +588,7 @@ async def websocket_ticket(tenant_id: UUID, auth: Session) -> dict:
 
 
 @app.websocket("/ws")
-async def websocket_updates(websocket: WebSocket, ticket: str = Query(...)) -> None:
+async def websocket_updates(websocket: WebSocket, ticket: Annotated[str, Query()]) -> None:
     if websocket.headers.get("origin") != get_settings().pulse_web_origin:
         await websocket.close(code=1008)
         return

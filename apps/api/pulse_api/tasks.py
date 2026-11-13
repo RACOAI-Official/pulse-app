@@ -22,7 +22,7 @@ celery_app.conf.broker_connection_retry_on_startup = True
 celery_app.conf.broker_connection_max_retries = None
 celery_app.conf.beat_schedule = {
     "reconcile-pending": {"task": "pulse.reconcile", "schedule": 30.0},
-    "reconcile-agent": {"task": "pulse.reconcile_agent", "schedule": 2.0},
+    "reconcile-agent": {"task": "pulse.reconcile_agent", "schedule": 30.0},
     "purge-retention": {"task": "pulse.purge_retention", "schedule": 86400.0},
     "reconcile-billing": {"task": "pulse.reconcile_billing", "schedule": 3600.0},
     "roll-credit-cycles": {"task": "pulse.roll_credit_cycles", "schedule": 900.0},
@@ -81,6 +81,19 @@ def _dispatch_outbound(message_id: str) -> None:
         logger.exception("Outbound dispatch failed for message %s", message_id)
 
 
+def _dispatch_agent_job(message_id: str) -> None:
+    try:
+        jobs = service_request("GET", "agent_jobs", params={
+            "source_message_id": eq(message_id), "select": "id,due_at", "limit": "1",
+        })
+        if jobs:
+            due_at = datetime.fromisoformat(jobs[0]["due_at"].replace("Z", "+00:00"))
+            process_agent_job.apply_async(args=[jobs[0]["id"]], eta=due_at)
+    except Exception:
+        # The periodic reconciler picks up durable jobs if lookup or dispatch fails.
+        logger.exception("Agent dispatch failed for message %s", message_id)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -133,6 +146,8 @@ def process_webhook(event_id: str) -> None:
                       incoming["sender_id"], token, incoming["body"])
         service_request("PATCH", "webhook_events", params={"id": eq(event_id)},
                         body={"status": "done", "processed_at": _now(), "last_error": None})
+        if message_id and agent_enabled:
+            _dispatch_agent_job(message_id)
         _publish(event["tenant_id"])
     except Exception as exc:
         logger.exception("Webhook event processing failed: %s", event_id)

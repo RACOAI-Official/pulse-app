@@ -4,6 +4,7 @@ Every OAuth round trip carries an HMAC-signed, single-use state bound to the ten
 Tokens are Fernet-encrypted into channel_connections exactly like the operator CLI does.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -170,7 +171,7 @@ async def oauth_config(tenant_id: UUID, auth: Session) -> dict:
 async def start(tenant_id: UUID, provider: Literal["messenger", "instagram"], data: StartInput, auth: Session) -> dict:
     await owner(tenant_id, auth[0])
     from .billing import require_paid
-    require_paid(str(tenant_id))
+    await asyncio.to_thread(require_paid, str(tenant_id))
     if not provider_ready(provider):
         raise HTTPException(503, f"{provider.title()} connect is not configured yet")
     nonce = secrets.token_urlsafe(18)
@@ -261,7 +262,7 @@ async def select_pages(tenant_id: UUID, data: SelectInput, auth: Session) -> lis
     await owner(tenant_id, auth[0])
     tenant = str(tenant_id)
     from .billing import require_paid
-    require_paid(tenant)
+    await asyncio.to_thread(require_paid, tenant)
     stored = await _load_pick(data.pick, tenant, auth[1]["id"], delete=True)
     chosen = [page for page in stored["pages"] if page["id"] in set(data.page_ids)]
     if not chosen:
@@ -270,7 +271,8 @@ async def select_pages(tenant_id: UUID, data: SelectInput, auth: Session) -> lis
     for page in chosen:
         await _call("POST", f"{_graph()}/{page['id']}/subscribed_apps", params={
             "subscribed_fields": PAGE_FIELDS, "access_token": page["token"]})
-        connected.append(save_connection(tenant, "messenger", page["id"], page["name"], page["token"]))
+        connected.append(await asyncio.to_thread(
+            save_connection, tenant, "messenger", page["id"], page["name"], page["token"]))
     return connected
 
 
@@ -286,7 +288,7 @@ async def instagram_callback(state: str = "", code: str = "", error_description:
     settings = get_settings()
     try:
         from .billing import require_paid
-        require_paid(data["tenant"])
+        await asyncio.to_thread(require_paid, data["tenant"])
         short = await _call("POST", "https://api.instagram.com/oauth/access_token", data={
             "client_id": settings.instagram_app_id, "client_secret": settings.instagram_app_secret,
             "grant_type": "authorization_code", "redirect_uri": redirect_uri("instagram"),
@@ -300,8 +302,8 @@ async def instagram_callback(state: str = "", code: str = "", error_description:
         await _call("POST", f"{_graph('graph.instagram.com')}/me/subscribed_apps", params={
             "subscribed_fields": "messages,comments", "access_token": token})
         expires = datetime.now(timezone.utc) + timedelta(seconds=int(long.get("expires_in") or 5_184_000))
-        save_connection(data["tenant"], "instagram", str(me["user_id"]),
-                        "@" + (me.get("username") or "instagram"), token, expires)
+        await asyncio.to_thread(save_connection, data["tenant"], "instagram", str(me["user_id"]),
+                                "@" + (me.get("username") or "instagram"), token, expires)
     except (HTTPException, KeyError, ValueError) as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else "Instagram returned an incomplete response"
         return _web(back, step="integrations", oauth_error=detail)
@@ -314,7 +316,7 @@ async def whatsapp_complete(tenant_id: UUID, data: WhatsAppInput, auth: Session)
     await owner(tenant_id, auth[0])
     tenant = str(tenant_id)
     from .billing import require_paid
-    require_paid(tenant)
+    await asyncio.to_thread(require_paid, tenant)
     if not provider_ready("whatsapp"):
         raise HTTPException(503, "WhatsApp connect is not configured yet")
     settings = get_settings()
@@ -327,13 +329,13 @@ async def whatsapp_complete(tenant_id: UUID, data: WhatsAppInput, auth: Session)
         "fields": "display_phone_number,verified_name", "access_token": token})
     await _call("POST", f"{_graph()}/{data.waba_id}/subscribed_apps", params={"access_token": token})
     name = phone.get("verified_name") or phone.get("display_phone_number") or "WhatsApp"
-    return save_connection(tenant, "whatsapp", data.phone_number_id, name, token)
+    return await asyncio.to_thread(save_connection, tenant, "whatsapp", data.phone_number_id, name, token)
 
 
 @router.delete("/channels/{connection_id}")
 async def disconnect(tenant_id: UUID, connection_id: UUID, auth: Session) -> dict:
     await owner(tenant_id, auth[0])
-    service_request("PATCH", "channel_connections", params={
+    await asyncio.to_thread(service_request, "PATCH", "channel_connections", params={
         "id": eq(str(connection_id)), "tenant_id": eq(str(tenant_id))}, body={"status": "disconnected"})
     return {"id": str(connection_id), "status": "disconnected"}
 

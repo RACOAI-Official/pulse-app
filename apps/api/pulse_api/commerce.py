@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .main import Session, membership
+from .request_body import read_limited_body
 from .settings import get_settings
 from .store import eq, service_headers, service_request, storage_path, user_request
 
@@ -553,8 +554,8 @@ async def upload_media(tenant_id: UUID, request: Request, auth: Session):
     mime = request.headers.get("content-type", "").split(";")[0]
     if mime not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(415, "Only JPEG, PNG, and WebP images are supported")
-    data = await request.body()
-    if not data or len(data) > 15 * 1024 * 1024:
+    data = await read_limited_body(request, 15 * 1024 * 1024, "Image must be 1 byte to 15 MB")
+    if not data:
         raise HTTPException(413, "Image must be 1 byte to 15 MB")
     path = f"{tenant_id}/{uuid4().hex}"
     settings = get_settings()
