@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, LockKeyhole, Mail } from "@/components/icons";
 import { publicApi } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import PulseMark from "@/components/PulseMark";
 
 export default function Signup() {
   const router = useRouter();
@@ -52,7 +53,7 @@ export default function Signup() {
   }
 
   return <main className="auth-screen callback-screen">
-    <div className="auth-brand"><span className="brand-mark">P</span><span>pulse<span className="brand-dot">.</span></span></div>
+    <div className="auth-brand"><span className="brand-mark"><PulseMark /></span><span>pulse<span className="brand-dot">.</span></span></div>
     <section className="auth-card">
       <div className="eyebrow">{step === "details" ? "CREATE ACCOUNT" : "CHECK YOUR EMAIL"}</div>
       <h2>{step === "details" ? "Start with Pulse" : "Enter your code"}</h2>

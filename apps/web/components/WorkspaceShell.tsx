@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "@/components/icons";
 import { api } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
+import PulseMark from "@/components/PulseMark";
 
 export type Workspace = ReturnType<typeof useWorkspace>;
 
@@ -43,15 +44,15 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
     window.addEventListener("pulse:orders-seen", load);
     return () => { alive = false; clearInterval(timer); window.removeEventListener("pulse:orders-seen", load); };
   }, [tenantId]);
-  if (workspace.loading) return <main className="loading-screen"><span className="brand-mark">P</span><p>Opening workspace…</p></main>;
-  if (setupPending && isOwner) return <main className="loading-screen"><span className="brand-mark">P</span><p>Finishing your setup…</p></main>;
-  if (workspace.error) return <main className="loading-screen"><span className="brand-mark">P</span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
+  if (workspace.loading) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Opening workspace…</p></main>;
+  if (setupPending && isOwner) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Finishing your setup…</p></main>;
+  if (workspace.error) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>{workspace.error}</p><button className="button" onClick={() => location.reload()}>Try again</button></main>;
 
   return <div className="workspace">
     <button className="mobile-nav-button" aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} aria-controls="workspace-navigation" onClick={() => setOpen(!open)}>{open ? <X size={20} /> : <Menu size={20} />}</button>
     {open && <button className="rail-scrim" aria-label="Close navigation" onClick={() => setOpen(false)} />}
     <aside className={`rail ${open ? "rail-open" : ""}`}>
-      <Link href="/dashboard" className="rail-brand" onClick={() => setOpen(false)} aria-label="Pulse dashboard"><span className="rail-brand-mark">P</span><strong>Pulse</strong></Link>
+      <Link href="/dashboard" className="rail-brand" onClick={() => setOpen(false)} aria-label="Pulse dashboard"><span className="rail-brand-mark"><PulseMark /></span><strong>Pulse</strong></Link>
       <nav id="workspace-navigation" aria-label="Main navigation">{sections.map(section => <div className="nav-section" key={section.label}>
         <div className="nav-section-label">{section.label}</div>
         {section.items.map(item => { const Icon = item.icon; const active = pathname === item.href; return <Link key={item.href} href={item.href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`rail-link ${active ? "active" : ""}`}><Icon size={17} weight={active ? "fill" : "regular"} /><span>{item.label}</span>{item.href === "/orders" && unseenOrders > 0 && <b className="rail-badge" aria-label={`${unseenOrders} new AI orders`}>{unseenOrders > 99 ? "99+" : unseenOrders}</b>}</Link>; })}
