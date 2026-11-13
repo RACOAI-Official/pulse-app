@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Mail, LockKeyhole } from "@/components/icons";
 import { supabase } from "@/lib/supabase";
+import PulseMark from "@/components/PulseMark";
 
 export default function Login() {
   const router = useRouter();
@@ -39,7 +40,7 @@ export default function Login() {
   }
 
   return <main className="auth-screen">
-    <header className="login-header"><div className="auth-brand"><span className="brand-mark">P</span><span>pulse<span className="brand-dot">.</span></span></div><span className="login-header-note">Your operations workspace</span></header>
+    <header className="login-header"><div className="auth-brand"><span className="brand-mark"><PulseMark /></span><span>pulse<span className="brand-dot">.</span></span></div><span className="login-header-note">Your operations workspace</span></header>
     <div className="auth-grid auth-grid-centered">
       <section className="auth-story">
         <div className="eyebrow">CUSTOMER OPERATIONS / ONE VIEW</div>

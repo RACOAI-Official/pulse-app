@@ -11,6 +11,7 @@ import InboxIntroStep from "@/components/onboarding/InboxIntroStep";
 import { ArrowLeft, ArrowRight, Check, LogOut } from "@/components/icons";
 import { api, ChannelConnection, OnboardingStep } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
+import PulseMark from "@/components/PulseMark";
 
 type Step = Exclude<OnboardingStep, "done">;
 type Flow = { step: OnboardingStep; completed: boolean; business_name: string; plan_state: string | null; plan_key: string | null; paid: boolean };
@@ -97,10 +98,10 @@ export default function OnboardingPage() {
     router.replace("/dashboard");
   }
 
-  if (workspace.loading || (isOwner && !flow && !error)) return <main className="loading-screen"><span className="brand-mark">P</span><p>Preparing your setup…</p></main>;
-  if (workspace.error) return <main className="loading-screen"><span className="brand-mark">P</span><p>{workspace.error}</p></main>;
-  if (!current) return <main className="loading-screen"><span className="brand-mark">P</span><p>No workspace found for this account.</p></main>;
-  if (!isOwner) return <main className="loading-screen"><span className="brand-mark">P</span><p>The owner of {current.tenants.name} is finishing setup.</p></main>;
+  if (workspace.loading || (isOwner && !flow && !error)) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>Preparing your setup…</p></main>;
+  if (workspace.error) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>{workspace.error}</p></main>;
+  if (!current) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>No workspace found for this account.</p></main>;
+  if (!isOwner) return <main className="loading-screen"><span className="brand-mark"><PulseMark /></span><p>The owner of {current.tenants.name} is finishing setup.</p></main>;
 
   const index = order.indexOf(step);
   const savedIndex = flow ? order.indexOf(flow.step as Step) : 0;
@@ -109,7 +110,7 @@ export default function OnboardingPage() {
 
   return <div className="onb">
     <aside className="onb-rail">
-      <div className="auth-brand"><span className="brand-mark">P</span><span>pulse<span className="brand-dot">.</span></span></div>
+      <div className="auth-brand"><span className="brand-mark"><PulseMark /></span><span>pulse<span className="brand-dot">.</span></span></div>
       <p className="onb-rail-intro">Let’s get <b>{flow?.business_name || current.tenants.name}</b> ready to answer customers.</p>
       <ol className="onb-steps">{rail.map((item, position) => {
         const state = position < index ? "done" : position === index ? "current" : "todo";

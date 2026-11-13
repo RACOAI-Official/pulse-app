@@ -349,3 +349,4 @@ html,body{overflow-x:clip}
 @media(max-width:1000px){.plan-grid.with-free{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
 @media(max-width:860px){.onb{grid-template-columns:1fr}.onb-rail{position:static;height:auto;padding:20px 16px;gap:16px}.onb-steps{grid-auto-flow:column;grid-auto-columns:max-content;overflow-x:auto;gap:6px;padding-bottom:4px}.onb-step-copy small,.onb-rail-intro,.onb-signout{display:none}.onb-stage{padding:24px 16px 48px}.onb-zones,.onb-row{grid-template-columns:1fr}.onb-thread{grid-template-columns:32px 1fr}.onb-thread-tag,.onb-thread small{display:none}}
 @media(prefers-reduced-motion:reduce){.onb-panel,.onb-panel .onb-card>*,.onb-thread{animation:none}.onb-progress i{transition:none}}
+.brand-mark,.rail-brand-mark{padding:0}.login-header .brand-mark{color:var(--teal-deep)}.brand-mark svg,.rail-brand-mark svg{width:64%;height:auto}
