@@ -4,12 +4,14 @@ The API hides the routes from everyone else (404); each DB function re-checks th
 and records admin_audit_log in the same transaction, with the actor taken from auth.uid().
 """
 
+import asyncio
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
+from . import billing
 from .deps import Session, user_limit
 from .store import eq, user_request
 
@@ -139,3 +141,79 @@ async def credit_ledger(auth: Operator,
 @router.get("/audit")
 async def audit(auth: Operator, page: Page = 1) -> dict:
     return await _rpc("pulse_admin_audit", auth[0], _paging(page))
+
+
+class PriceInput(BaseModel):
+    plan: Literal["pro", "enterprise"]
+    interval: Literal["month", "year"]
+    currency: Literal["USD", "GBP", "BDT"]
+    amount_minor: int = Field(ge=100, le=1_000_000_000, description="Minor units: cents, pence or paisa")
+    request_id: UUID
+
+
+class TrialCreditsInput(BaseModel):
+    credits: int = Field(ge=0, le=100_000)
+
+
+def _price_table() -> list[dict]:
+    live = billing.live_prices(fresh=True)
+    table = []
+    for plan in billing.PLANS:
+        for interval in billing.INTERVALS:
+            for currency in billing.CURRENCIES:
+                row = live.get((plan, interval, currency))
+                table.append({
+                    "plan": plan, "interval": interval, "currency": currency,
+                    "amount_minor": int(row["amount_minor"]) if row else billing.default_price(plan, interval, currency),
+                    "default_minor": billing.default_price(plan, interval, currency),
+                    "source": "admin" if row else "default",
+                    "stripe_price_id": ((row or {}).get("stripe_price_id") if row
+                                        else billing.default_stripe_price_id(plan, interval, currency)) or None,
+                    "updated_at": (row or {}).get("created_at"),
+                })
+    return table
+
+
+@router.get("/plans")
+async def plans(auth: Operator) -> dict:
+    data = await _rpc("pulse_admin_plans", auth[0], {})
+    table = await asyncio.to_thread(_price_table)
+    return {"prices": table, "trial_credits": data["trial_credits"], "history": data["history"],
+            "credits": {plan: billing.allowance(plan) for plan in billing.PLANS},
+            "stripe_configured": billing.providers()["stripe"]}
+
+
+def _new_stripe_price(data: PriceInput) -> str:
+    """Stripe prices are immutable: create a new one on the plan's existing product."""
+    current = billing.stripe_price_id(data.plan, data.interval, data.currency)
+    if not current:
+        raise HTTPException(409, "This plan has no Stripe price yet. Set its PULSE_STRIPE_PRICE_* ID first")
+    product = billing.stripe("GET", f"prices/{current}").get("product")
+    product = product.get("id") if isinstance(product, dict) else product
+    if not product:
+        raise HTTPException(502, "Could not read the Stripe product for this plan")
+    created = billing.stripe("POST", "prices", key=f"pulse-price-{data.request_id}", data={
+        "product": product, "unit_amount": str(data.amount_minor), "currency": data.currency.lower(),
+        "recurring[interval]": data.interval, "nickname": f"Pulse {billing.NAMES[data.plan]} {data.interval}",
+        "metadata[plan_key]": data.plan, "metadata[interval]": data.interval})
+    return created["id"]
+
+
+@router.put("/plans/price", dependencies=[user_limit("admin-write", 60, 60)])
+async def set_price(data: PriceInput, auth: Operator) -> dict:
+    billing.clear_price_cache()
+    if data.amount_minor == await asyncio.to_thread(billing.price, data.plan, data.interval, data.currency):
+        raise HTTPException(409, "That is already the current price")
+    stripe_id = None
+    if data.currency in billing.STRIPE_CURRENCIES:
+        stripe_id = await asyncio.to_thread(_new_stripe_price, data)
+    result = await _rpc("pulse_admin_set_price", auth[0], {
+        "p_plan": data.plan, "p_interval": data.interval, "p_currency": data.currency,
+        "p_amount": data.amount_minor, "p_stripe_price_id": stripe_id, "p_request_id": str(data.request_id)})
+    billing.clear_price_cache()
+    return {**result, "stripe_price_id": stripe_id}
+
+
+@router.put("/plans/trial-credits", dependencies=[user_limit("admin-write", 60, 60)])
+async def set_trial_credits(data: TrialCreditsInput, auth: Operator) -> dict:
+    return await _rpc("pulse_admin_set_trial_credits", auth[0], {"p_credits": data.credits})

@@ -60,6 +60,7 @@ async def billing_access_gate(request: Request, call_next):
             # Plan and onboarding stay reachable so an owner can always finish setup or pay.
             if (path.startswith(f"/tenants/{tenant_id}/billing/") or path == f"/tenants/{tenant_id}/billing"
                     or path.startswith(f"/tenants/{tenant_id}/onboarding/")
+                    or path.startswith(f"/tenants/{tenant_id}/notifications")
                     or path == f"/tenants/{tenant_id}/delivery"):
                 return await call_next(request)
             from .billing import has_access
@@ -629,6 +630,7 @@ from .signup import router as signup_router  # noqa: E402
 from .billing import router as billing_router, webhooks as billing_webhooks  # noqa: E402
 from .onboarding import router as onboarding_router  # noqa: E402
 from .meta_oauth import router as meta_oauth_router, callbacks as meta_oauth_callbacks  # noqa: E402
+from .notifications import router as notifications_router  # noqa: E402
 
 app.include_router(admin_router)
 app.include_router(commerce_router)
@@ -641,3 +643,4 @@ app.include_router(billing_webhooks)
 app.include_router(onboarding_router)
 app.include_router(meta_oauth_router)
 app.include_router(meta_oauth_callbacks)
+app.include_router(notifications_router)

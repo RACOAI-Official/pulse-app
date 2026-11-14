@@ -62,12 +62,68 @@ def provider_for(currency: str) -> str:
     return "sslcommerz" if currency == "BDT" else "stripe"
 
 
-def price(plan: str, interval: str, currency: str) -> int:
+PRICE_CACHE_SECONDS = 60
+_price_cache: tuple[float, dict] = (0.0, {})
+
+
+def default_price(plan: str, interval: str, currency: str) -> int:
     return int(getattr(get_settings(), f"pulse_price_{plan}_{interval}_{currency.lower()}"))
 
 
-def stripe_price_id(plan: str, interval: str, currency: str) -> str:
+def default_stripe_price_id(plan: str, interval: str, currency: str) -> str:
     return getattr(get_settings(), f"pulse_stripe_price_{plan}_{interval}_{currency.lower()}", "")
+
+
+def live_prices(fresh: bool = False) -> dict[tuple[str, str, str], dict]:
+    """Newest admin-set price per (plan, interval, currency); cached briefly per process."""
+    global _price_cache
+    now = time.monotonic()
+    if not fresh and now - _price_cache[0] < PRICE_CACHE_SECONDS:
+        return _price_cache[1]
+    latest: dict[tuple[str, str, str], dict] = {}
+    for row in rows("plan_price_versions", order="created_at.desc,id.desc", limit="1000",
+                    select="plan_key,billing_interval,currency_code,amount_minor,stripe_price_id,created_at"):
+        latest.setdefault((row["plan_key"], row["billing_interval"], row["currency_code"]), row)
+    _price_cache = (now, latest)
+    return latest
+
+
+def clear_price_cache() -> None:
+    global _price_cache
+    _price_cache = (0.0, {})
+
+
+def price(plan: str, interval: str, currency: str) -> int:
+    row = live_prices().get((plan, interval, currency))
+    return int(row["amount_minor"]) if row else default_price(plan, interval, currency)
+
+
+def stripe_price_id(plan: str, interval: str, currency: str) -> str:
+    row = live_prices().get((plan, interval, currency))
+    return (row.get("stripe_price_id") or "") if row else default_stripe_price_id(plan, interval, currency)
+
+
+def sold_stripe_prices(plan: str, interval: str, currency: str) -> dict[str, int]:
+    """Every Stripe price ID Pulse has sold for this plan with its amount, so grandfathered
+    subscriptions keep renewing at the price they bought."""
+    known: dict[str, int] = {}
+    original = default_stripe_price_id(plan, interval, currency)
+    if original:
+        known[original] = default_price(plan, interval, currency)
+    for row in rows("plan_price_versions", plan_key=eq(plan), billing_interval=eq(interval),
+                    currency_code=eq(currency), select="stripe_price_id,amount_minor"):
+        if row.get("stripe_price_id"):
+            known[row["stripe_price_id"]] = int(row["amount_minor"])
+    return known
+
+
+def subscription_amount(sub: dict, plan: str, interval: str, currency: str) -> int | None:
+    """Amount a renewal must charge: the subscription's own (possibly older) Pulse price."""
+    items = (sub.get("items") or {}).get("data") or []
+    price_id = ((items[0].get("price") or {}).get("id") if len(items) == 1 else None)
+    if not price_id:
+        return price(plan, interval, currency)
+    return sold_stripe_prices(plan, interval, currency).get(price_id)
 
 
 def allowance(plan: str) -> int:
@@ -95,6 +151,16 @@ def credits(tenant_id: str) -> dict | None:
     found = rows("credit_accounts", tenant_id=eq(tenant_id),
                  select="allowance,balance,bonus_balance,cycle_start,cycle_end", limit="1")
     return found[0] if found else None
+
+
+def credit_summary(row: dict | None) -> dict:
+    """Header view of AI credits; low means at most 10% of this cycle's allowance is left."""
+    row = row or {}
+    allowance = int(row.get("allowance") or 0)
+    available = int(row.get("balance") or 0) + int(row.get("bonus_balance") or 0)
+    return {"available": available, "allowance": allowance, "bonus_balance": int(row.get("bonus_balance") or 0),
+            "cycle_end": row.get("cycle_end"),
+            "low": available == 0 or (allowance > 0 and available * 10 <= allowance)}
 
 
 def has_access(tenant_id: str) -> bool:
@@ -158,6 +224,12 @@ def upgrade_quote(current: dict, now: datetime | None = None) -> int:
     if term <= 0 or difference <= 0:
         return 0
     return math.ceil(difference * min(1.0, remaining / term) / 100) * 100
+
+
+@router.get("/credits")
+async def credit_status(tenant_id: UUID, auth: Session) -> dict:
+    await membership(tenant_id, auth[0])
+    return credit_summary(await asyncio.to_thread(credits, str(tenant_id)))
 
 
 @router.get("")
@@ -545,10 +617,11 @@ def stripe_subscription_paid(invoice: dict) -> None:
     meta = sub.get("metadata") or {}
     tenant, plan, interval = meta.get("tenant_id"), meta.get("plan_key"), meta.get("interval", "month")
     currency = (invoice.get("currency") or "").upper()
-    if (not tenant or plan not in PLANS or interval not in INTERVALS or currency not in STRIPE_CURRENCIES
-            or invoice.get("amount_paid") != price(plan, interval, currency)):
+    if not tenant or plan not in PLANS or interval not in INTERVALS or currency not in STRIPE_CURRENCIES:
         raise HTTPException(422, "Stripe invoice does not match a Pulse plan")
-    amount = price(plan, interval, currency)
+    amount = subscription_amount(sub, plan, interval, currency)
+    if amount is None or invoice.get("amount_paid") != amount:
+        raise HTTPException(422, "Stripe invoice does not match a Pulse plan")
     current = account(tenant)
     if (not current or current.get("stripe_customer_id") != sub.get("customer") or
             invoice.get("customer") != sub.get("customer")):

@@ -3,13 +3,42 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Users, X } from "@/components/icons";
+import { Activity, BarChart3, Bot, BookOpen, Boxes, ChevronDown, CreditCard, Headphones, Inbox, LifeBuoy, LogOut, Megaphone, Menu, MessageSquareText, Package, Phone, Settings2, ShoppingBag, Sparkle, Users, X } from "@/components/icons";
 import { api } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
 import PulseMark from "@/components/PulseMark";
 import { BootLoading } from "@/components/LoadingFeedback";
 
 export type Workspace = ReturnType<typeof useWorkspace>;
+type CreditStatus = { available: number; allowance: number; bonus_balance: number; low: boolean };
+
+/** Live AI credit balance for the header: refreshed every 30s while visible, on focus, and on demand. */
+function useCredits(tenantId: string) {
+  const [credits, setCredits] = useState<CreditStatus | null>(null);
+  useEffect(() => {
+    if (!tenantId) return;
+    let alive = true;
+    setCredits(null);
+    const load = () => {
+      if (document.visibilityState !== "visible") return;
+      api<CreditStatus>(`/tenants/${tenantId}/billing/credits`).then(value => { if (alive) setCredits(value); }).catch(() => {});
+    };
+    load();
+    const timer = setInterval(load, 30000);
+    document.addEventListener("visibilitychange", load);
+    window.addEventListener("pulse:credits-changed", load);
+    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); window.removeEventListener("pulse:credits-changed", load); };
+  }, [tenantId]);
+  return credits;
+}
+
+function CreditChip({ credits }: { credits: CreditStatus | null }) {
+  if (!credits) return null;
+  const label = `${credits.available.toLocaleString()} AI credit${credits.available === 1 ? "" : "s"} available${credits.low ? ", running low" : ""}`;
+  return <Link href="/plan" className={`credit-chip${credits.low ? " low" : ""}`} title={credits.bonus_balance ? `Includes ${credits.bonus_balance.toLocaleString()} bonus credits` : "AI credits this cycle"} aria-label={label}>
+    <Sparkle size={15} weight="fill" aria-hidden="true" /><strong>{credits.available.toLocaleString()}</strong><span>credits</span>
+  </Link>;
+}
 
 const sections = [
   { label: "Overview", items: [{ label: "Dashboard", href: "/dashboard", icon: BarChart3 }, { label: "Inbox", href: "/inbox", icon: Inbox }, { label: "Integrations", href: "/integrations", icon: Boxes }] },
@@ -36,6 +65,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
   const [open, setOpen] = useState(false);
   const [unseenOrders, setUnseenOrders] = useState(0);
   const tenantId = workspace.tenantId;
+  const credits = useCredits(tenantId);
   useEffect(() => {
     if (!tenantId) return;
     let alive = true;
@@ -63,7 +93,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
     <div className="workspace-main">
       <header className="workspace-topbar">
         <div className="workspace-title"><span>Pulse workspace</span><strong>{titles[pathname] || "Pulse"}</strong></div>
-        <div className="topbar-actions"><label className="workspace-select"><span>Business</span><select aria-label="Business workspace" value={workspace.tenantId} onChange={e => workspace.setTenantId(e.target.value)}>{workspace.memberships.map(item => <option key={item.tenant_id} value={item.tenant_id}>{item.tenants.name}</option>)}</select><ChevronDown size={15} /></label><span className="operator-avatar" title={workspace.current?.role || "Member"}>{workspace.current?.tenants.name?.charAt(0).toUpperCase() || "P"}</span></div>
+        <div className="topbar-actions"><CreditChip credits={credits} /><label className="workspace-select"><span>Business</span><select aria-label="Business workspace" value={workspace.tenantId} onChange={e => workspace.setTenantId(e.target.value)}>{workspace.memberships.map(item => <option key={item.tenant_id} value={item.tenant_id}>{item.tenants.name}</option>)}</select><ChevronDown size={15} /></label><span className="operator-avatar" title={workspace.current?.role || "Member"}>{workspace.current?.tenants.name?.charAt(0).toUpperCase() || "P"}</span></div>
       </header>
       {workspace.current?.tenants.suspended_at && <p className="form-notice plan-banner warn workspace-suspended" role="alert">This workspace is suspended and read-only. AI replies and sending are paused. Contact Pulse support to restore access.</p>}
       {setupPending ? <section className="empty-workspace"><h2>Workspace setup in progress</h2><p>The owner of {workspace.current?.tenants.name || "this business"} is still finishing onboarding. Check back soon.</p></section> : workspace.tenantId ? children(workspace) : <section className="empty-workspace"><h2>No workspace yet</h2><p>An operator needs to create your first Pulse workspace and invite you.</p></section>}

@@ -121,7 +121,9 @@ def test_place_agent_order_creates_draft_order(monkeypatch):
     reply, handoff = tasks._place_agent_order(job, proposal, bengali=True)
     assert not handoff
     assert "#ABCDEF12" in reply and "2,550 BDT" in reply and "গ্রহণ" in reply
-    rpc = calls[-1]
+    assert calls[-1][0] == "rpc/pulse_notify_order_drafted"
+    assert calls[-1][1]["body"] == {"p_tenant": "tenant-1", "p_order": calls[-1][1]["body"]["p_order"]}
+    rpc = calls[-2]
     assert rpc[0] == "rpc/pulse_agent_create_order"
     assert rpc[1]["body"]["p_items"] == [{"variant_id": "variant-1", "quantity": 3}]
     assert rpc[1]["body"]["p_agent_job_id"] == "job-1"
