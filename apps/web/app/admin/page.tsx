@@ -47,7 +47,7 @@ function useList<T>(path: string, params: Record<string, string | number | undef
   return { data, error, reload: load };
 }
 
-function OverviewTab() {
+function OverviewTab({ onManage }: { onManage: () => void }) {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   useEffect(() => { api<Overview>("/admin/overview").then(setData).catch(caught => setError(caught.message)); }, []);
@@ -56,6 +56,7 @@ function OverviewTab() {
   const revenue = Object.entries(data.revenue_30d);
   const cards: [string, string | number][] = [["Businesses", data.businesses], ["Paid", data.paid], ["On trial", data.trialing], ["Suspended", data.suspended], ["Users", data.users], ["New businesses (7d)", data.signups_7d], ["Payments in review", data.payments_review], ["Connected channels", data.connected_channels], ["Failed webhooks", data.failed_webhooks], ["Problem sends", data.problem_sends]];
   return <>
+    <div className="admin-overview-actions"><p>Adjust credits and manage workspace access from Businesses.</p><button type="button" className="button primary" onClick={onManage}>Manage businesses</button></div>
     <div className="metric-grid admin-metrics">{cards.map(([name, value]) => <div className="metric-card" key={name}><span>{name}</span><strong>{value.toLocaleString()}</strong></div>)}</div>
     <section className="commerce-card"><h2>Revenue, last 30 days</h2><p>Paid invoices only, per currency (never converted).</p>{revenue.length ? <div className="admin-kv">{revenue.map(([currency, minor]) => <div key={currency}><span>{currency}</span><strong>{formatMoney(minor, currency)}</strong></div>)}</div> : <p className="commerce-empty">No paid invoices in the last 30 days.</p>}</section>
   </>;
@@ -108,6 +109,7 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
     {data && <>
       {data.tenant.suspended_at && <p className="form-notice plan-banner warn">Suspended {dateTime(data.tenant.suspended_at)}: {data.tenant.suspended_reason}</p>}
       <div className="admin-kv">
+        <div><span>Created</span><strong>{date(data.tenant.created_at)}</strong></div>
         <div><span>Status</span><strong>{status({ suspended_at: data.tenant.suspended_at, access: data.access, billing_state: data.billing?.state ?? null }).text}</strong></div>
         <div><span>Plan</span><strong>{label(data.billing?.plan_key) } {data.billing?.billing_interval ? `· ${data.billing.billing_interval}ly` : ""}</strong></div>
         <div><span>Paid through</span><strong>{date(data.billing?.paid_through || data.billing?.trial_ends_at)}</strong></div>
@@ -160,6 +162,7 @@ function BusinessesTab() {
   const [open, setOpen] = useState<string | null>(null);
   const { data, error, reload } = useList<Business>("/admin/businesses", { q: query, status: filter, page });
   return <>
+    <p className="admin-help">Use <strong>Manage</strong> to adjust bonus credits or suspend and restore a workspace.</p>
     <form className="commerce-section-head" onSubmit={event => { event.preventDefault(); setPage(1); setQuery(q.trim()); }}>
       <input type="search" maxLength={120} value={q} onChange={e => setQ(e.target.value)} placeholder="Name, owner email or ID" aria-label="Search businesses" />
       <select value={filter} onChange={e => { setPage(1); setFilter(e.target.value); }} aria-label="Status filter"><option value="all">All</option><option value="paid">Paid</option><option value="trialing">On trial</option><option value="expired">No access</option><option value="suspended">Suspended</option></select>
@@ -167,7 +170,23 @@ function BusinessesTab() {
     </form>
     {error && <p className="form-notice" role="alert">{error}</p>}
     {!data && !error && <SectionSkeleton variant="dashboard" />}
-    {data && <section className="commerce-card">{data.rows.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Plan</th><th>Until</th><th>Credits (plan + bonus)</th><th>Members</th><th>Created</th></tr></thead><tbody>{data.rows.map(row => { const s = status(row); return <tr key={row.id} className="clickable" onClick={() => setOpen(row.id)}><td><button className="text-button" onClick={() => setOpen(row.id)}>{row.name}</button></td><td>{row.owner_email || "—"}</td><td><span className={`commerce-state ${s.tone}`}>{s.text}</span></td><td>{label(row.plan_key)}</td><td>{date(row.paid_through || row.trial_ends_at)}</td><td className="num">{(row.balance ?? 0).toLocaleString()} + {row.bonus_balance.toLocaleString()}</td><td className="num">{row.members}</td><td>{date(row.created_at)}</td></tr>; })}</tbody></table></div> : <p className="commerce-empty">No businesses match.</p>}<Pager page={page} total={data.total} onPage={setPage} /></section>}
+    {data && <section className="commerce-card admin-list-card">
+      {data.rows.length ? <div className="admin-table-wrap"><table className="admin-table admin-business-table">
+        <thead><tr><th>Business / owner</th><th>Status / plan</th><th>Until</th><th className="num">Credits<br />plan + bonus</th><th className="num">Members</th><th className="admin-action-cell">Actions</th></tr></thead>
+        <tbody>{data.rows.map(row => {
+          const s = status(row);
+          return <tr key={row.id}>
+            <td><span className="admin-cell-stack"><strong>{row.name}</strong><small>{row.owner_email || "No owner email"}</small></span></td>
+            <td><span className="admin-cell-stack"><span className={`commerce-state ${s.tone}`}>{s.text}</span><small>{label(row.plan_key)}</small></span></td>
+            <td>{date(row.paid_through || row.trial_ends_at)}</td>
+            <td className="num">{(row.balance ?? 0).toLocaleString()} + {row.bonus_balance.toLocaleString()}</td>
+            <td className="num">{row.members}</td>
+            <td className="admin-action-cell"><button type="button" className="button admin-manage" onClick={() => setOpen(row.id)} aria-label={`Manage ${row.name}`}>Manage</button></td>
+          </tr>;
+        })}</tbody>
+      </table></div> : <p className="commerce-empty">No businesses match.</p>}
+      <Pager page={page} total={data.total} onPage={setPage} />
+    </section>}
     {open && <><button className="rail-scrim admin-scrim" aria-label="Close details" onClick={() => setOpen(null)} /><BusinessDetail id={open} onClose={() => setOpen(null)} onChanged={reload} /></>}
   </>;
 }
@@ -236,7 +255,7 @@ export default function AdminPage() {
   return <main className="ops-page admin-page">
     <header className="ops-head"><Link href="/dashboard" className="rail-brand" aria-label="Pulse dashboard"><span className="rail-brand-mark"><PulseMark /></span></Link><div><h1>Admin</h1><p>Signed in as {email}. Every change is recorded in the audit log.</p></div><button className="button subtle admin-signout" onClick={workspace.signOut}>Sign out</button></header>
     <nav className="admin-tabs" aria-label="Admin sections">{TABS.map(item => <button key={item} className={tab === item ? "active" : ""} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>{item}</button>)}</nav>
-    {tab === "Overview" && <OverviewTab />}
+    {tab === "Overview" && <OverviewTab onManage={() => setTab("Businesses")} />}
     {tab === "Businesses" && <BusinessesTab />}
     {tab === "Users" && <UsersTab />}
     {tab === "Payments" && <PaymentsTab />}
