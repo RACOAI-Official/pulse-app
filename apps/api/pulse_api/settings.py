@@ -74,6 +74,22 @@ class Settings(BaseSettings):
     pulse_terms_url: str = ""
     pulse_privacy_url: str = ""
     pulse_refund_url: str = ""
+    # Owner alerts (email + WhatsApp). Off until the operator has configured senders.
+    pulse_notifications_enabled: bool = False
+    # Pulse's own WhatsApp Cloud API number (not a tenant channel).
+    pulse_whatsapp_phone_id: str = ""
+    pulse_whatsapp_number: str = ""
+    pulse_whatsapp_token: str = ""
+    pulse_whatsapp_app_secret: str = ""
+    pulse_whatsapp_verify_token: str = ""
+    # Meta-approved template name per alert (one name, languages bn + en). Empty = WhatsApp skipped.
+    pulse_whatsapp_template_order_confirmed: str = ""
+    pulse_whatsapp_template_order_drafted: str = ""
+    pulse_whatsapp_template_credits_low: str = ""
+    pulse_whatsapp_template_credits_empty: str = ""
+    pulse_whatsapp_template_plan_ending: str = ""
+    pulse_whatsapp_template_plan_expired: str = ""
+    pulse_whatsapp_template_test: str = ""
 
 
 @lru_cache

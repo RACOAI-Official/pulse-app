@@ -28,7 +28,28 @@ celery_app.conf.beat_schedule = {
     "roll-credit-cycles": {"task": "pulse.roll_credit_cycles", "schedule": 900.0},
     "index-product-images": {"task": "pulse.index_pending_product_images", "schedule": 300.0},
     "refresh-instagram-tokens": {"task": "pulse.refresh_instagram_tokens", "schedule": 86400.0},
+    "reconcile-notifications": {"task": "pulse.reconcile_notifications", "schedule": 15.0},
+    "notify-billing-deadlines": {"task": "pulse.notify_billing_deadlines", "schedule": 3600.0},
 }
+
+
+@celery_app.task(name="pulse.send_notification")
+def send_notification(delivery_id: str) -> None:
+    from .notification_delivery import deliver
+    deliver(delivery_id)
+
+
+@celery_app.task(name="pulse.reconcile_notifications")
+def reconcile_notifications() -> None:
+    from .notification_delivery import reconcile
+    reconcile(send_notification.delay)
+
+
+@celery_app.task(name="pulse.notify_billing_deadlines")
+def notify_billing_deadlines() -> None:
+    queued = service_request("POST", "rpc/pulse_notify_billing_deadlines", body={})
+    if queued:
+        logger.info("Queued %s plan deadline alerts", queued)
 
 
 @celery_app.task(name="pulse.reconcile_billing")
@@ -298,6 +319,14 @@ def _customer_profile(conversation_id: str) -> dict | None:
     return (rows[0].get("customer_profiles") if rows else None) or None
 
 
+def _notify_order_drafted(tenant_id: str, order_id: str) -> None:
+    """Queue the owner's "AI drafted an order" alert; never fails the customer reply."""
+    try:
+        service_request("POST", "rpc/pulse_notify_order_drafted", body={"p_tenant": tenant_id, "p_order": order_id})
+    except StoreError:
+        logger.warning("Could not queue order-drafted alert for %s", order_id)
+
+
 def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, bool]:
     """Create a draft order for the team to review; return the customer reply and handoff flag."""
     try:
@@ -314,6 +343,8 @@ def _place_agent_order(job: dict, proposal: dict, bengali: bool) -> tuple[str, b
                 "p_zone": proposal["delivery_zone"],
             })
             result = {**result, **priced}
+        if not result.get("existing"):
+            _notify_order_drafted(job["tenant_id"], result["order_id"])
     except (LookupError, StoreError) as exc:
         logger.warning("Agent order rejected for job %s: %s", job["id"], exc)
         if bengali:

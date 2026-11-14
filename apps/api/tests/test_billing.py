@@ -16,6 +16,12 @@ TENANT = "00000000-0000-0000-0000-000000000001"
 NOW = datetime(2026, 11, 11, tzinfo=timezone.utc)
 
 
+
+@pytest.fixture(autouse=True)
+def default_prices(monkeypatch):
+    """No admin-set prices: the configured defaults apply."""
+    monkeypatch.setattr(billing, "live_prices", lambda fresh=False: {})
+
 def iso(value: datetime) -> str:
     return value.isoformat()
 

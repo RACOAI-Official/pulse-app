@@ -17,7 +17,11 @@ type Detail = { tenant: { id: string; name: string; created_at: string; currency
 type User = { id: string; email: string; created_at: string; last_sign_in_at: string | null; email_confirmed_at: string | null; is_operator: boolean; workspaces: { tenant_id: string; name: string; role: string }[] };
 type Audit = { id: number; action: string; tenant_id: string | null; tenant_name: string | null; details: Record<string, unknown>; created_at: string; actor_email: string | null };
 
-const TABS = ["Overview", "Businesses", "Users", "Payments", "Credits", "Audit"] as const;
+type PriceRow = { plan: string; interval: string; currency: string; amount_minor: number; default_minor: number; source: "admin" | "default"; stripe_price_id: string | null; updated_at: string | null };
+type PriceChange = { plan_key: string; billing_interval: string; currency_code: string; amount_minor: number; stripe_price_id: string | null; created_at: string; actor_email: string | null };
+type Plans = { prices: PriceRow[]; trial_credits: number; history: PriceChange[]; credits: Record<string, number>; stripe_configured: boolean };
+
+const TABS = ["Overview", "Businesses", "Plans", "Users", "Payments", "Credits", "Audit"] as const;
 type Tab = typeof TABS[number];
 const PAGE = 50;
 const REASONS = ["admin_grant", "admin_deduct", "cycle_grant", "upgrade_topup", "trial", "ai_reply", "refund"];
@@ -191,6 +195,83 @@ function BusinessesTab() {
   </>;
 }
 
+const PLAN_NAMES: Record<string, string> = { pro: "Pro", enterprise: "Enterprise" };
+const PERIOD: Record<string, string> = { month: "Monthly", year: "Yearly" };
+
+function PriceEditor({ row, stripeReady, onSaved }: { row: PriceRow; stripeReady: boolean; onSaved: () => void }) {
+  const [value, setValue] = useState((row.amount_minor / 100).toFixed(2));
+  const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const stripe = row.currency !== "BDT";
+  const blocked = stripe && (!stripeReady || !row.stripe_price_id);
+  const minor = Math.round(Number(value) * 100);
+  const changed = Number.isFinite(minor) && minor !== row.amount_minor;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!/^\d{1,8}(\.\d{1,2})?$/.test(value.trim()) || minor < 100) { setNotice("Enter a price of at least 1.00, up to 2 decimals."); return; }
+    if (!window.confirm(`Change ${PLAN_NAMES[row.plan]} ${PERIOD[row.interval].toLowerCase()} (${row.currency}) from ${formatMoney(row.amount_minor, row.currency)} to ${formatMoney(minor, row.currency)}?\n\nNew checkouts pay the new price. Current subscribers keep the price they bought.`)) return;
+    setBusy(true); setNotice("");
+    try {
+      await api("/admin/plans/price", { method: "PUT", body: JSON.stringify({ plan: row.plan, interval: row.interval, currency: row.currency, amount_minor: minor, request_id: requestKey }) });
+      setRequestKey(crypto.randomUUID()); setNotice("Saved."); onSaved();
+    } catch (caught) { setNotice(caught instanceof Error ? caught.message : "Could not save price"); }
+    finally { setBusy(false); }
+  }
+  return <tr>
+    <td>{PERIOD[row.interval]}</td><td>{row.currency}</td>
+    <td><form className="admin-price-form" onSubmit={save}>
+      <label className="sr-only" htmlFor={`price-${row.plan}-${row.interval}-${row.currency}`}>{PLAN_NAMES[row.plan]} {PERIOD[row.interval]} price in {row.currency}</label>
+      <input id={`price-${row.plan}-${row.interval}-${row.currency}`} inputMode="decimal" value={value} onChange={e => { setValue(e.target.value); setNotice(""); }} disabled={busy || blocked} />
+      <button className="button" disabled={busy || blocked || !changed}>{busy ? "Saving…" : "Save"}</button>
+    </form>{notice && <small className="admin-price-notice" role="status">{notice}</small>}</td>
+    <td>{row.source === "admin" ? <>Set {date(row.updated_at)}</> : "Default"}{row.source === "admin" && row.default_minor !== row.amount_minor && <small className="admin-muted"> (default {formatMoney(row.default_minor, row.currency)})</small>}</td>
+    <td className="admin-mono">{stripe ? (row.stripe_price_id || <span className="error-text">Not set up</span>) : "—"}</td>
+  </tr>;
+}
+
+function TrialCreditsForm({ current, onSaved }: { current: number; onSaved: () => void }) {
+  const [value, setValue] = useState(String(current));
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const credits = Number(value);
+    if (!Number.isInteger(credits) || credits < 0 || credits > 100000) { setNotice("Enter a whole number from 0 to 100,000."); return; }
+    if (!window.confirm(`Give new businesses ${credits.toLocaleString()} trial credits? Businesses already on trial keep what they have.`)) return;
+    setBusy(true); setNotice("");
+    try { await api("/admin/plans/trial-credits", { method: "PUT", body: JSON.stringify({ credits }) }); setNotice("Saved."); onSaved(); }
+    catch (caught) { setNotice(caught instanceof Error ? caught.message : "Could not save trial credits"); }
+    finally { setBusy(false); }
+  }
+  return <form className="admin-inline-form" onSubmit={save}>
+    <label>AI credits for new free trials<input type="number" min={0} max={100000} step={1} value={value} onChange={e => setValue(e.target.value)} disabled={busy} /></label>
+    <button className="button primary" disabled={busy || Number(value) === current}>{busy ? "Saving…" : "Save"}</button>
+    {notice && <p className="form-notice" role="status">{notice}</p>}
+  </form>;
+}
+
+function PlansTab() {
+  const [data, setData] = useState<Plans | null>(null);
+  const [error, setError] = useState("");
+  const [version, setVersion] = useState(0);
+  const load = useCallback(() => { setError(""); api<Plans>("/admin/plans").then(value => { setData(value); setVersion(v => v + 1); }).catch(caught => setError(caught.message)); }, []);
+  useEffect(load, [load]);
+  if (error) return <p className="form-notice" role="alert">{error}</p>;
+  if (!data) return <SectionSkeleton variant="dashboard" />;
+  return <>
+    <p className="admin-help">Prices shown to business owners on the Plan page. Changes apply to <strong>new checkouts</strong>; current subscribers keep the price they bought. Plan features and monthly credits are not edited here.</p>
+    {!data.stripe_configured && <p className="form-notice">Stripe is not configured, so USD and GBP prices cannot be changed. BDT (SSLCOMMERZ) prices can.</p>}
+    {["pro", "enterprise"].map(plan => <section className="commerce-card" key={plan}>
+      <h2>{PLAN_NAMES[plan]} <small className="admin-muted">· {data.credits[plan]?.toLocaleString()} AI credits / month</small></h2>
+      <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Billing</th><th>Currency</th><th>Price</th><th>Source</th><th>Stripe price</th></tr></thead>
+        <tbody>{data.prices.filter(row => row.plan === plan).map(row => <PriceEditor key={`${row.interval}-${row.currency}-${version}`} row={row} stripeReady={data.stripe_configured} onSaved={load} />)}</tbody></table></div>
+    </section>)}
+    <section className="commerce-card"><h2>Free trial</h2><p>7-day trial for every new business. Changing this does not affect businesses that already signed up; use bonus credits on a business for that.</p><TrialCreditsForm key={`trial-${version}`} current={data.trial_credits} onSaved={load} /></section>
+    <section className="commerce-card"><h2>Price history</h2>{data.history.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>When</th><th>Admin</th><th>Plan</th><th className="num">Price</th><th>Stripe price</th></tr></thead><tbody>{data.history.map((row, index) => <tr key={`${row.created_at}-${index}`}><td>{dateTime(row.created_at)}</td><td>{row.actor_email || "—"}</td><td>{PLAN_NAMES[row.plan_key]} {PERIOD[row.billing_interval].toLowerCase()}</td><td className="num">{formatMoney(row.amount_minor, row.currency_code)}</td><td className="admin-mono">{row.stripe_price_id || "—"}</td></tr>)}</tbody></table></div> : <p className="commerce-empty">No price changes yet. Configured defaults apply.</p>}</section>
+  </>;
+}
+
 function UsersTab() {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
@@ -257,6 +338,7 @@ export default function AdminPage() {
     <nav className="admin-tabs" aria-label="Admin sections">{TABS.map(item => <button key={item} className={tab === item ? "active" : ""} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>{item}</button>)}</nav>
     {tab === "Overview" && <OverviewTab onManage={() => setTab("Businesses")} />}
     {tab === "Businesses" && <BusinessesTab />}
+    {tab === "Plans" && <PlansTab />}
     {tab === "Users" && <UsersTab />}
     {tab === "Payments" && <PaymentsTab />}
     {tab === "Credits" && <CreditsTab />}

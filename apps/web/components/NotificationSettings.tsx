@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
 type Preferences = { email: string; whatsapp: string; email_enabled: boolean; whatsapp_enabled: boolean; language: "bangla" | "english"; email_verified_at?: string; whatsapp_verified_at?: string; whatsapp_consent_at?: string; consent?: boolean };
-type Delivery = { id: string; channel: string; status: string; error?: string; created_at: string; summary: { order_id: string } };
+type Delivery = { id: string; kind: string; channel: string; status: string; error?: string; created_at: string; summary: { order_id?: string } };
+const KIND_LABEL: Record<string, string> = { order_confirmed: "Order confirmed", order_drafted: "AI drafted order", credits_low: "Credits low", credits_empty: "Credits used up", plan_ending: "Plan ending", plan_expired: "Plan ended", test: "Test" };
 type Response = { settings: Preferences; sender: { email: string; whatsapp: string; available: boolean } };
 
 export default function NotificationSettings({ tenantId }: { tenantId: string }) {
@@ -34,15 +35,15 @@ export default function NotificationSettings({ tenantId }: { tenantId: string })
       setNotice(channel === "email" ? "Check your email. After verification, refresh this panel and enable email." : "Open WhatsApp and send the connection code, then refresh this panel and enable WhatsApp.");
     });
   }
-  if (!draft || !data) return <section className="settings-section"><h2>Order notifications</h2><p role="status">{notice || "Loading notification settings…"}</p></section>;
+  if (!draft || !data) return <section className="settings-section"><h2>Alerts</h2><p role="status">{notice || "Loading notification settings…"}</p></section>;
   const dirty = draft.email !== data.settings.email || draft.whatsapp !== data.settings.whatsapp || draft.language !== data.settings.language || draft.email_enabled !== data.settings.email_enabled || draft.whatsapp_enabled !== data.settings.whatsapp_enabled || draft.consent !== !!data.settings.whatsapp_consent_at;
-  return <section className="settings-section"><h2>Order notifications</h2><p>Pulse sends a summary when an order is first confirmed. Confirmation does not mean payment was received.</p>
+  return <section className="settings-section"><h2>Alerts</h2><p>Pulse alerts you by email and WhatsApp when an order is confirmed, when the AI drafts an order, when AI credits run low or run out, and before your trial or plan ends. Your sign-in email is verified automatically.</p>
     <p className="settings-note">From: {data.sender.email || "Email not configured"} · {data.sender.whatsapp || "WhatsApp not configured"}{!data.sender.available && " · Sending paused by Pulse"}</p>
     <form className="commerce-form-grid" onSubmit={event => { event.preventDefault(); void act(async () => { await api(base, { method: "PUT", body: JSON.stringify(draft) }); setVerificationUrl(""); setNotice("Saved. Verify new destinations before enabling them."); }); }}>
       <label>Notification email<input type="email" maxLength={254} value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value, email_enabled: false })} /></label>
       <label>WhatsApp number<input type="tel" placeholder="+8801712345678" value={draft.whatsapp} onChange={e => setDraft({ ...draft, whatsapp: e.target.value, whatsapp_enabled: false })} /></label>
       <label>Language<select value={draft.language} onChange={e => setDraft({ ...draft, language: e.target.value as Preferences["language"] })}><option value="bangla">বাংলা</option><option value="english">English</option></select></label>
-      <label><input type="checkbox" checked={!!draft.consent} onChange={e => setDraft({ ...draft, consent: e.target.checked, whatsapp_enabled: e.target.checked && draft.whatsapp_enabled })} /> I agree to receive order notifications from Pulse on this WhatsApp number. Send STOP to opt out.</label>
+      <label><input type="checkbox" checked={!!draft.consent} onChange={e => setDraft({ ...draft, consent: e.target.checked, whatsapp_enabled: e.target.checked && draft.whatsapp_enabled })} /> I agree to receive Pulse alerts on this WhatsApp number. Send STOP to opt out.</label>
       <label><input type="checkbox" disabled={!data.settings.email_verified_at || draft.email !== data.settings.email} checked={draft.email_enabled} onChange={e => setDraft({ ...draft, email_enabled: e.target.checked })} /> Email enabled {data.settings.email_verified_at ? "(verified)" : "(verification required)"}</label>
       <label><input type="checkbox" disabled={!data.settings.whatsapp_verified_at || !draft.consent || draft.whatsapp !== data.settings.whatsapp} checked={draft.whatsapp_enabled} onChange={e => setDraft({ ...draft, whatsapp_enabled: e.target.checked })} /> WhatsApp enabled {data.settings.whatsapp_verified_at ? "(verified)" : "(verification required)"}</label>
       <button className="button primary" disabled={busy || !dirty}>Save settings</button>
@@ -55,9 +56,9 @@ export default function NotificationSettings({ tenantId }: { tenantId: string })
     </div>
     {verificationUrl && <p><a href={verificationUrl} target="_blank" rel="noreferrer">Open WhatsApp to send your verification code</a></p>}
     {notice && <p className="form-notice" role="status">{notice}</p>}
-    <h3>Recent deliveries</h3><p className="settings-note">Email “accepted” means the mail server accepted it; inbox delivery is not confirmed.</p>
-    {!history.length && <p>No notifications yet.</p>}
-    {history.map(item => <div className="health-row" key={item.id}><span>{item.summary.order_id.slice(0, 8)} · {item.channel} · {item.status}{item.error && ` — ${item.error}`}</span>{["failed", "uncertain"].includes(item.status) && <button className="button" disabled={busy} onClick={() => item.status === "uncertain" ? setRetry(item.id) : act(async () => { await api(`${base}/deliveries/${item.id}/retry`, { method: "POST", body: "{}" }); })}>Retry</button>}</div>)}
+    <h3>Recent alerts</h3><p className="settings-note">Email “accepted” means the mail server accepted it; inbox delivery is not confirmed. WhatsApp alerts show “sent”, “delivered” and “read” as Meta reports them.</p>
+    {!history.length && <p>No alerts yet.</p>}
+    {history.map(item => <div className="health-row" key={item.id}><span>{KIND_LABEL[item.kind] || item.kind}{item.summary.order_id ? ` #${item.summary.order_id.slice(0, 8).toUpperCase()}` : ""} · {item.channel} · {item.status}{item.error && ` — ${item.error}`}</span>{["failed", "uncertain"].includes(item.status) && <button className="button" disabled={busy} onClick={() => item.status === "uncertain" ? setRetry(item.id) : act(async () => { await api(`${base}/deliveries/${item.id}/retry`, { method: "POST", body: "{}" }); })}>Retry</button>}</div>)}
     {retry && <div role="alert"><p>This notification may already have arrived. Sending again could create a duplicate.</p><button className="button" onClick={() => setRetry(null)}>Cancel</button><button className="button" disabled={busy} onClick={() => act(async () => { await api(`${base}/deliveries/${retry}/retry`, { method: "POST", body: JSON.stringify({ acknowledge_uncertain: true }) }); setRetry(null); })}>Send again</button></div>}
   </section>;
 }
