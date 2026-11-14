@@ -39,7 +39,7 @@ async def membership(tenant_id: UUID, token: str) -> dict:
     user = await auth_user(token)
     rows = await user_request("GET", "memberships", token, params={
         "tenant_id": eq(str(tenant_id)), "user_id": eq(user["id"]),
-        "select": "tenant_id,user_id,role", "limit": "1",
+        "select": "tenant_id,user_id,role,tenants(suspended_at)", "limit": "1",
     })
     if not rows:
         raise HTTPException(404, "Tenant not found")

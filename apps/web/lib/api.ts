@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 export interface TenantMembership {
   tenant_id: string;
   role: "owner" | "manager" | "staff";
-  tenants: { id: string; name: string; onboarding_step?: OnboardingStep; onboarding_completed_at?: string | null };
+  tenants: { id: string; name: string; onboarding_step?: OnboardingStep; onboarding_completed_at?: string | null; suspended_at?: string | null; suspended_reason?: string | null };
 }
 
 export type OnboardingStep = "business" | "ai" | "delivery" | "plan" | "integrations" | "inbox" | "done";

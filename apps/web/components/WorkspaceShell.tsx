@@ -65,6 +65,7 @@ export default function WorkspaceShell({ children }: { children: (workspace: Wor
         <div className="workspace-title"><span>Pulse workspace</span><strong>{titles[pathname] || "Pulse"}</strong></div>
         <div className="topbar-actions"><label className="workspace-select"><span>Business</span><select aria-label="Business workspace" value={workspace.tenantId} onChange={e => workspace.setTenantId(e.target.value)}>{workspace.memberships.map(item => <option key={item.tenant_id} value={item.tenant_id}>{item.tenants.name}</option>)}</select><ChevronDown size={15} /></label><span className="operator-avatar" title={workspace.current?.role || "Member"}>{workspace.current?.tenants.name?.charAt(0).toUpperCase() || "P"}</span></div>
       </header>
+      {workspace.current?.tenants.suspended_at && <p className="form-notice plan-banner warn workspace-suspended" role="alert">This workspace is suspended and read-only. AI replies and sending are paused. Contact Pulse support to restore access.</p>}
       {setupPending ? <section className="empty-workspace"><h2>Workspace setup in progress</h2><p>The owner of {workspace.current?.tenants.name || "this business"} is still finishing onboarding. Check back soon.</p></section> : workspace.tenantId ? children(workspace) : <section className="empty-workspace"><h2>No workspace yet</h2><p>An operator needs to create your first Pulse workspace and invite you.</p></section>}
     </div>
   </div>;

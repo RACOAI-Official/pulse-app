@@ -14,7 +14,7 @@ type Account = {
   provider: "stripe" | "sslcommerz" | null; state: "inactive" | "trialing" | "active" | "expired" | "review";
   auto_renew: boolean; trial_ends_at: string | null; term_start: string | null; paid_through: string | null;
 };
-type Credits = { allowance: number; balance: number; cycle_start: string; cycle_end: string };
+type Credits = { allowance: number; balance: number; bonus_balance?: number; cycle_start: string; cycle_end: string };
 type Invoice = { id: string; plan_key: PlanKey; billing_interval: Interval; kind: "purchase" | "upgrade"; provider: string; amount_minor: number; currency_code: string; state: string; period_start: string | null; period_end: string | null; paid_at: string | null; created_at: string };
 type Status = {
   account: Account | null; credits: Credits | null; invoices: Invoice[]; access: boolean;
@@ -148,7 +148,9 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
     if (!status) return list;
     if (!status.access) list.push({ tone: "warn", text: "Your workspace has no active plan. AI replies, sending, and edits are paused until you choose a plan." });
     if (trialActive) list.push({ tone: "info", text: `Free trial: ${credits?.balance ?? 0} AI credits left, ends ${date(account?.trial_ends_at)}. Choose a plan anytime — your trial ends when it starts.` });
-    if (status.access && credits && credits.allowance > 0 && credits.balance === 0) list.push({ tone: "warn", text: `AI credits used up. AI auto-replies are paused and new messages wait in the Inbox for your team. Credits reset on ${date(credits.cycle_end)}${account?.plan_key === "pro" && paidActive ? ", or upgrade to Enterprise for more now" : ""}.` });
+    const bonus = credits?.bonus_balance ?? 0;
+    if (status.access && credits && credits.allowance > 0 && credits.balance === 0 && bonus > 0) list.push({ tone: "info", text: `Plan credits used up. AI replies now use your ${bonus.toLocaleString()} bonus credits until the reset on ${date(credits.cycle_end)}.` });
+    else if (status.access && credits && credits.allowance > 0 && credits.balance === 0) list.push({ tone: "warn", text: `AI credits used up. AI auto-replies are paused and new messages wait in the Inbox for your team. Credits reset on ${date(credits.cycle_end)}${account?.plan_key === "pro" && paidActive ? ", or upgrade to Enterprise for more now" : ""}.` });
     else if (status.access && used >= 0.8) list.push({ tone: "warn", text: `You have used ${Math.round(used * 100)}% of this month's AI credits.` });
     if (sslRenewalOpen) list.push({ tone: "warn", text: `Your ${account?.billing_interval === "year" ? "yearly" : "monthly"} term ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}. Renew now so service continues without a gap.` });
     if (account?.pending_plan_key && paidActive) list.push({ tone: "info", text: `Switching to ${account.pending_plan_key === "pro" ? "Pro" : "Enterprise"} at renewal on ${date(account.paid_through)}.` });
@@ -214,6 +216,7 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
           {Array.from({ length: 40 }, (_, index) => <i key={index} className={index / 40 < 1 - used ? "fill" : ""} />)}
         </div>
         <p>{credits ? `${(credits.allowance - credits.balance).toLocaleString()} AI replies sent since ${date(credits.cycle_start)}.` : "Credits appear once your plan or trial starts."}</p>
+        {!!credits?.bonus_balance && <p><strong>+{credits.bonus_balance.toLocaleString()} bonus credits</strong> — never reset, used after plan credits.</p>}
       </div>
     </section>}
 

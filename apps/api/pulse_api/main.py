@@ -35,7 +35,7 @@ app = FastAPI(title="Pulse API", version="0.1.0", docs_url="/docs" if _docs else
 
 @app.middleware("http")
 async def billing_access_gate(request: Request, call_next):
-    """Block paid writes when the workspace has no active plan or trial; Plan stays reachable."""
+    """Block all writes to a suspended workspace, and paid writes when there is no active plan or trial."""
     path = request.url.path
     if request.method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/tenants/"):
         match = re.match(r"^/tenants/([0-9a-fA-F-]{36})(?:/|$)", path)
@@ -44,20 +44,24 @@ async def billing_access_gate(request: Request, call_next):
                 tenant_id = UUID(match.group(1))
             except ValueError:
                 return await call_next(request)
+            authorization = request.headers.get("authorization", "")
+            if not authorization.startswith("Bearer "):
+                return await call_next(request)
+            try:
+                member = await membership(tenant_id, authorization.removeprefix("Bearer "))
+            except HTTPException:
+                return await call_next(request)
+            except StoreError:
+                return JSONResponse(status_code=503, content={"detail": "Workspace access could not be checked."})
+            # Suspension (set by a platform operator) makes the workspace read-only, Plan included.
+            if (member.get("tenants") or {}).get("suspended_at"):
+                return JSONResponse(status_code=403, content={
+                    "detail": "Workspace suspended. Contact Pulse support to restore access."})
             # Plan and onboarding stay reachable so an owner can always finish setup or pay.
             if (path.startswith(f"/tenants/{tenant_id}/billing/") or path == f"/tenants/{tenant_id}/billing"
                     or path.startswith(f"/tenants/{tenant_id}/onboarding/")
                     or path == f"/tenants/{tenant_id}/delivery"):
                 return await call_next(request)
-            authorization = request.headers.get("authorization", "")
-            if not authorization.startswith("Bearer "):
-                return await call_next(request)
-            try:
-                await membership(tenant_id, authorization.removeprefix("Bearer "))
-            except HTTPException:
-                return await call_next(request)
-            except StoreError:
-                return JSONResponse(status_code=503, content={"detail": "Workspace access could not be checked."})
             from .billing import has_access
             try:
                 if not await asyncio.to_thread(has_access, str(tenant_id)):
@@ -246,7 +250,7 @@ async def set_agent_enabled(tenant_id: UUID, data: EnabledRequest, auth: Session
 async def my_tenants(auth: Session) -> list[dict]:
     token, _ = auth
     rows = await user_request("GET", "memberships", token, params={
-        "select": "tenant_id,role,tenants(id,name,onboarding_step,onboarding_completed_at)",
+        "select": "tenant_id,role,tenants(id,name,onboarding_step,onboarding_completed_at,suspended_at,suspended_reason)",
         "order": "created_at.asc",
     })
     return rows
@@ -616,6 +620,7 @@ async def websocket_updates(websocket: WebSocket, ticket: Annotated[str, Query(m
         await client.aclose()
 
 
+from .admin import router as admin_router  # noqa: E402
 from .commerce import router as commerce_router  # noqa: E402
 from .inbox_extra import router as inbox_extra_router  # noqa: E402
 from .admin_agent import router as admin_agent_router  # noqa: E402
@@ -625,6 +630,7 @@ from .billing import router as billing_router, webhooks as billing_webhooks  # n
 from .onboarding import router as onboarding_router  # noqa: E402
 from .meta_oauth import router as meta_oauth_router, callbacks as meta_oauth_callbacks  # noqa: E402
 
+app.include_router(admin_router)
 app.include_router(commerce_router)
 app.include_router(inbox_extra_router)
 app.include_router(admin_agent_router)

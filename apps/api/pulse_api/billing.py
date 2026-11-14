@@ -93,7 +93,7 @@ def account(tenant_id: str) -> dict | None:
 
 def credits(tenant_id: str) -> dict | None:
     found = rows("credit_accounts", tenant_id=eq(tenant_id),
-                 select="allowance,balance,cycle_start,cycle_end", limit="1")
+                 select="allowance,balance,bonus_balance,cycle_start,cycle_end", limit="1")
     return found[0] if found else None
 
 
