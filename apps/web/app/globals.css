@@ -585,3 +585,13 @@ form.admin-inline-form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;marg
 .password-form .password-show{display:flex;gap:8px;align-items:center;margin-top:0;font-weight:500}
 .password-form .password-show input{width:16px;height:16px;min-height:0;margin:0;padding:0}
 .password-form .commerce-actions{align-items:center;flex-wrap:wrap}
+
+/* Form fields: soft teal focus ring instead of the dark 3px outline, everywhere.
+   :is() keeps specificity above page-level overrides (.agent-card, .studio, auth). */
+:root{--field-focus-border:var(--teal);--field-focus-ring:rgba(17,99,93,.16)}
+:is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select):is(:focus,:focus-visible){outline:none;border-color:var(--field-focus-border);box-shadow:0 0 0 3px var(--field-focus-ring);transition:border-color .15s,box-shadow .15s}
+.input-shell:focus-within,.media-add:focus-within{outline:none;border-color:var(--field-focus-border);box-shadow:0 0 0 3px var(--field-focus-ring)}
+/* Fields that sit inside a framed wrapper: the wrapper shows the ring, not the bare field. */
+:is(.input-shell,.composer,.workspace-select) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select):is(:focus,:focus-visible){outline:none;border-color:transparent;box-shadow:none}
+/* Checkboxes, radios and file pickers keep a visible but light keyboard ring. */
+:is(input[type=checkbox],input[type=radio],input[type=file]):focus-visible{outline:2px solid var(--teal);outline-offset:2px;box-shadow:none}
