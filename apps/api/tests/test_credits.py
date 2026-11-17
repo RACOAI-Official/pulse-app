@@ -82,4 +82,4 @@ def test_roll_cycles_sends_configured_allowances(monkeypatch):
     monkeypatch.setattr(billing, "service_request", lambda method, path, **kw: sent.update(path=path, **kw) or 3)
     assert billing.roll_credit_cycles() == 3
     assert sent["path"] == "rpc/pulse_credit_roll_cycles"
-    assert sent["body"] == {"p_allowances": {"pro": 4000, "enterprise": 15000}}
+    assert sent["body"] == {"p_allowances": {"starter": 1000, "pro": 4000, "enterprise": 12000}}

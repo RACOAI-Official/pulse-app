@@ -316,8 +316,9 @@ async def whatsapp_complete(tenant_id: UUID, data: WhatsAppInput, auth: Session)
     """Finish WhatsApp Embedded Signup: swap the SDK code for a business token and subscribe the WABA."""
     await owner(tenant_id, auth[0])
     tenant = str(tenant_id)
-    from .billing import require_paid
+    from .billing import require_paid, require_plan
     await asyncio.to_thread(require_paid, tenant)
+    await asyncio.to_thread(require_plan, tenant, "pro", "WhatsApp")
     if not provider_ready("whatsapp"):
         raise HTTPException(503, "WhatsApp connect is not configured yet")
     settings = get_settings()

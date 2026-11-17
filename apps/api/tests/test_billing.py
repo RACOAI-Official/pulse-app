@@ -46,10 +46,13 @@ def test_price_matrix_defaults_give_two_months_free_yearly():
     for plan in billing.PLANS:
         for currency in billing.CURRENCIES:
             assert billing.price(plan, "year", currency) == billing.price(plan, "month", currency) * 10
+    assert billing.PLANS == ("starter", "pro", "enterprise")
     assert billing.price("pro", "month", "USD") == 3000
     assert billing.price("enterprise", "month", "GBP") == 8000
-    assert billing.price("pro", "month", "BDT") == 350000
-    assert billing.allowance("pro") == 4000 and billing.allowance("enterprise") == 15000
+    assert billing.price("starter", "month", "BDT") == 499900
+    assert billing.price("pro", "month", "BDT") == 649900
+    assert billing.price("enterprise", "year", "BDT") == 10999000
+    assert (billing.allowance("starter"), billing.allowance("pro"), billing.allowance("enterprise")) == (1000, 4000, 12000)
 
 
 def test_currency_picks_gateway():
@@ -59,14 +62,18 @@ def test_currency_picks_gateway():
 
 
 def test_upgrade_quote_is_prorated_and_rounded_up():
-    current = {"billing_interval": "month", "currency_code": "BDT",
+    current = {"plan_key": "pro", "billing_interval": "month", "currency_code": "BDT",
                "term_start": iso(NOW - timedelta(days=15)), "paid_through": iso(NOW + timedelta(days=15))}
-    # Half the term left: (12000 - 3500) / 2 = 4250 taka.
-    assert billing.upgrade_quote(current, NOW) == 425000
+    # Half the term left: (10999 - 6499) / 2 = 2250 taka.
+    assert billing.upgrade_quote(current, NOW) == 225000
+    current["plan_key"] = "starter"
+    # Starter -> Business, half left: (6499 - 4999) / 2 = 750 taka.
+    assert billing.upgrade_quote(current, NOW, target="pro") == 75000
+    current["plan_key"] = "pro"
     current["paid_through"] = iso(NOW + timedelta(days=10))
     current["term_start"] = iso(NOW - timedelta(days=20))
-    # A third left: 8500 / 3 = 2833.33 -> 2834 taka.
-    assert billing.upgrade_quote(current, NOW) == 283400
+    # A third left: 4500 / 3 = 1500 taka.
+    assert billing.upgrade_quote(current, NOW) == 150000
     current["paid_through"] = iso(NOW - timedelta(seconds=1))
     assert billing.upgrade_quote(current, NOW) == 0
 

@@ -150,7 +150,7 @@ export default function ChannelConnect({ tenantId, isOwner, paid, returnTo, onCh
   return <section className="connect" aria-label="Channels">
     {error && <p className="form-notice plan-banner warn" role="alert">{error}</p>}
     {notice && <p className="form-notice plan-banner" role="status">{notice}</p>}
-    {locked && <p className="form-notice plan-banner info">Channel integrations need Pro. Your trial covers AI setup and preview.</p>}
+    {locked && <p className="form-notice plan-banner info">Channel integrations need a paid plan (WhatsApp needs Business or higher). Your trial covers AI setup and preview.</p>}
 
     {pages.length > 0 && <form className="commerce-card connect-pick" onSubmit={savePages}>
       <h2>Choose Facebook Pages</h2>

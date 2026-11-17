@@ -275,3 +275,100 @@ async def test_notification_preferences_are_validated(client, monkeypatch, body)
         response = await client.put(f"/tenants/{TENANT}/notifications", json=body,
                                     headers={"authorization": "Bearer t"})
     assert response.status_code == 422
+
+
+# OpenWA (self-hosted WhatsApp gateway) ------------------------------------------------------
+
+def _openwa_settings(**extra):
+    return SimpleNamespace(**{**get_settings().model_dump(), "pulse_whatsapp_provider": "openwa",
+        "pulse_openwa_url": "https://wa.example.test", "pulse_openwa_api_key": "owa-key",
+        "pulse_openwa_session_id": "sess-1", "pulse_openwa_webhook_secret": "owa-secret",
+        "pulse_whatsapp_number": "+8801343831119", **extra})
+
+
+def test_openwa_sends_plain_text_without_templates(monkeypatch):
+    monkeypatch.setattr(delivery, "get_settings", lambda: _openwa_settings())
+    seen = {}
+
+    class Client:
+        def __init__(self, **_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def post(self, url, headers, json):
+            seen.update(url=url, headers=headers, body=json)
+            return httpx.Response(201, json={"messageId": "wamid-1"})
+    monkeypatch.setattr(delivery.httpx, "Client", Client)
+    row = _delivery("credits_low", {"available": 12, "allowance": 120}, "bangla", "whatsapp")
+    assert delivery.send_whatsapp(row) == "wamid-1"
+    assert seen["url"] == "https://wa.example.test/api/sessions/sess-1/messages/send-text"
+    assert seen["headers"]["X-API-Key"] == "owa-key" and row["claim_token"] in seen["headers"]["Idempotency-Key"]
+    assert seen["body"]["chatId"] == "8801712345678@c.us"
+    assert "12" in seen["body"]["text"] and "STOP" in seen["body"]["text"]
+
+
+@pytest.mark.parametrize(("code", "kind"), [(409, "retry"), (503, "retry"), (500, "uncertain"), (401, "failed")])
+def test_openwa_error_mapping(monkeypatch, code, kind):
+    monkeypatch.setattr(delivery, "get_settings", lambda: _openwa_settings())
+
+    class Client:
+        def __init__(self, **_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def post(self, *_a, **_k):
+            return httpx.Response(code, json={})
+    monkeypatch.setattr(delivery.httpx, "Client", Client)
+    with pytest.raises(delivery.DeliveryFailure) as error:
+        delivery.send_whatsapp(_delivery("test", {}, channel="whatsapp"))
+    assert error.value.kind == kind
+
+
+def test_openwa_requires_https_gateway(monkeypatch):
+    monkeypatch.setattr(delivery, "get_settings", lambda: _openwa_settings(pulse_openwa_url="http://wa.example.test"))
+    assert delivery.whatsapp_ready() is False
+
+
+def _openwa_post(payload: dict, secret: str = "owa-secret") -> tuple[bytes, dict]:
+    raw = json.dumps(payload).encode()
+    return raw, {"x-openwa-signature": "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()}
+
+
+@pytest.mark.asyncio
+async def test_openwa_webhook_verifies_signature_age_and_sender(client, monkeypatch):
+    monkeypatch.setattr(notifications, "get_settings", lambda: _openwa_settings())
+    writes = []
+    monkeypatch.setattr(notifications, "service_request", lambda method, path, **kw: writes.append((path, kw)))
+    fresh = delivery.now().isoformat()
+
+    def event(body, **data):
+        return {"event": "message.received", "sessionId": "sess-1", "timestamp": fresh,
+                "data": {"from": "8801712345678@c.us", "body": body, "fromMe": False, "isGroup": False, **data}}
+    async with client:
+        raw, headers = _openwa_post(event("STOP"), secret="wrong")
+        assert (await client.post("/webhooks/pulse-openwa", content=raw, headers=headers)).status_code == 403
+        stale = {**event("STOP"), "timestamp": "2020-01-01T00:00:00Z"}
+        raw, headers = _openwa_post(stale)
+        assert (await client.post("/webhooks/pulse-openwa", content=raw, headers=headers)).status_code == 400
+        for ignored in (event("STOP", fromMe=True), event("STOP", isGroup=True), event("STOP", **{"from": "123@lid"}),
+                        {**event("STOP"), "sessionId": "other"}, {**event("STOP"), "event": "message.sent"}):
+            raw, headers = _openwa_post(ignored)
+            assert (await client.post("/webhooks/pulse-openwa", content=raw, headers=headers)).status_code == 200
+        assert not writes
+        raw, headers = _openwa_post(event("PULSE VERIFY " + "t" * 43))
+        assert (await client.post("/webhooks/pulse-openwa", content=raw, headers=headers)).status_code == 200
+        raw, headers = _openwa_post(event("বন্ধ"))
+        assert (await client.post("/webhooks/pulse-openwa", content=raw, headers=headers)).status_code == 200
+    assert writes[0][0] == "rpc/pulse_verify_notification"
+    assert writes[0][1]["body"]["p_sender"] == "+8801712345678"
+    assert writes[1][0] == "notification_settings" and writes[1][1]["params"] == {"whatsapp": "eq.+8801712345678"}

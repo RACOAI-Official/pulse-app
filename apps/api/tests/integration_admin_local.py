@@ -9,15 +9,15 @@ from uuid import uuid4
 
 import httpx
 
-from pulse_api.billing import consume_credit, has_access
+from pulse_api.billing import consume_credit, effective_plan, has_access
 from pulse_api.main import app
 from pulse_api.settings import get_settings
 from pulse_api.store import eq, service_auth_request, service_request
 
 
-def account(email: str) -> tuple[str, str]:
+def account(email: str, password: str = "") -> tuple[str, str]:
     settings = get_settings()
-    password = f"Local-test-{uuid4().hex}!"
+    password = password or f"Local-test-{uuid4().hex}!"
     user = service_auth_request("POST", "admin/users", body={"email": email, "password": password, "email_confirm": True})
     token = httpx.post(f"{settings.supabase_url}/auth/v1/token?grant_type=password",
                        headers={"apikey": settings.supabase_anon_key},
@@ -31,7 +31,8 @@ async def main():
     suffix = uuid4().hex[:8]
     operator_id, operator_token = account(f"admin-op-{suffix}@example.test")
     service_request("POST", "platform_operators", body={"user_id": operator_id})
-    owner_id, owner_token = account(f"admin-owner-{suffix}@example.test")
+    owner_password = f"Local-owner-{uuid4().hex}!"
+    owner_id, owner_token = account(f"admin-owner-{suffix}@example.test", owner_password)
     tenant = service_request("POST", "tenants", body={"name": f"Admin Probe {suffix}"},
                              prefer="return=representation")[0]
     service_request("POST", "memberships", body={"tenant_id": tenant["id"], "user_id": owner_id, "role": "owner"})
@@ -115,6 +116,56 @@ async def main():
         credits = (await c.get("/admin/credits", headers=op, params={"tenant_id": tid, "reason": "admin_grant"})).json()
         assert credits["total"] == 1 and credits["rows"][0]["note"] == "launch promo"
 
+        # Assigned plans: Starter for 2 months gates seats and WhatsApp; revoke drops to free.
+        assert effective_plan(tid) is None
+        bad = await c.post(f"/admin/businesses/{tid}/plan", headers=op, json={"plan": "pro", "months": 30, "reason": "pilot"})
+        assert bad.status_code == 422
+        assert (await c.post(f"/admin/businesses/{tid}/plan", headers=own,
+                             json={"plan": "pro", "months": 1, "reason": "self"})).status_code == 404
+        assigned = await c.post(f"/admin/businesses/{tid}/plan", headers=op,
+                                json={"plan": "starter", "months": 2, "reason": "pilot partner"})
+        assert assigned.status_code == 200 and assigned.json()["plan_key"] == "starter", assigned.text
+        assert effective_plan(tid) == "starter"
+        page = (await c.get(f"/tenants/{tid}/billing", headers=own)).json()
+        assert page["grant"]["plan_key"] == "starter" and page["effective_plan"] == "starter", page
+        assert page["credits"]["balance"] == 1000 and page["seat_limit"] == 1
+        assert [plan["key"] for plan in page["plans"]] == ["starter", "pro", "enterprise"]
+        seat = await c.post(f"/tenants/{tid}/invites", headers=own, json={"email": f"staff-{suffix}@example.test"})
+        assert seat.status_code == 402 and "Starter" in seat.json()["detail"], seat.text
+        upgraded = await c.post(f"/admin/businesses/{tid}/plan", headers=op,
+                                json={"plan": "enterprise", "months": 6, "reason": "upgrade pilot"})
+        assert upgraded.json()["plan_key"] == "enterprise" and effective_plan(tid) == "enterprise"
+        detail = (await c.get(f"/admin/businesses/{tid}", headers=op)).json()
+        assert detail["operator_grant"]["plan_key"] == "enterprise" and detail["operator_grant"]["months"] == 6
+        assert detail["credits"]["balance"] == 12000
+        assert (await c.post(f"/admin/businesses/{tid}/plan/revoke", headers=op, json={})).status_code == 422
+        revoked = await c.post(f"/admin/businesses/{tid}/plan/revoke", headers=op, json={"reason": "pilot ended"})
+        assert revoked.json()["revoked"] == "enterprise" and revoked.json()["effective_plan"] is None, revoked.text
+        assert effective_plan(tid) is None
+        page = (await c.get(f"/tenants/{tid}/billing", headers=own)).json()
+        assert page["grant"] is None and page["credits"]["balance"] == 0
+        again = await c.post(f"/admin/businesses/{tid}/plan/revoke", headers=op, json={"reason": "pilot ended"})
+        assert again.status_code >= 400
+        audit = (await c.get("/admin/audit", headers=op)).json()
+        assert [row["action"] for row in audit["rows"] if row["tenant_id"] == tid][:3] == [
+            "plan_revoke", "plan_assign", "plan_assign"]
+
+        # Password change: wrong current rejected; new password works, old one fails.
+        wrong = await c.post("/me/password", headers=own, json={"current_password": "nope", "new_password": "Brand-new-pass-1"})
+        assert wrong.status_code == 400, wrong.text
+        new_password = f"Changed-{uuid4().hex}!"
+        changed = await c.post("/me/password", headers=own,
+                               json={"current_password": owner_password, "new_password": new_password})
+        assert changed.json() == {"status": "updated"}, changed.text
+        async with httpx.AsyncClient() as raw:
+            login = lambda pw: raw.post(f"{settings.supabase_url}/auth/v1/token?grant_type=password",
+                                        headers={"apikey": settings.supabase_anon_key},
+                                        json={"email": f"admin-owner-{suffix}@example.test", "password": pw})
+            assert (await login(owner_password)).status_code == 400
+            fresh = await login(new_password)
+            assert fresh.status_code == 200
+            owner_token = fresh.json()["access_token"]
+
         # Owner cannot read the audit table or call admin RPCs directly through PostgREST.
         async with httpx.AsyncClient() as raw:
             headers = {"apikey": settings.supabase_anon_key, "Authorization": f"Bearer {owner_token}"}
@@ -124,7 +175,8 @@ async def main():
                                  json={"p_tenant_id": tid, "p_amount": 999, "p_note": "self grant",
                                        "p_idempotency_key": str(uuid4())})
             assert rpc.status_code == 403 and "Operator" in rpc.text, (rpc.status_code, rpc.text)
-    print("PASS: operator gate, lists, bonus grant/replay/deduct, spend order, suspend/unsuspend, audit, direct-DB denial")
+    print("PASS: operator gate, lists, bonus grant/replay/deduct, spend order, suspend/unsuspend, audit, "
+          "plan assign/upgrade/revoke, seat gate, password change, direct-DB denial")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,21 @@ Date: 2026-11-14 · Status: implemented (local), not deployed
    Without a template, that alert's WhatsApp delivery is marked `suppressed` ("template not configured"); email still sends.
 4. Set `PULSE_NOTIFICATIONS_ENABLED=true` on the API and worker, then restart them.
 
+## WhatsApp via OpenWA (chosen for launch)
+
+`PULSE_WHATSAPP_PROVIDER=openwa` sends plain-text alerts through the self-hosted OpenWA gateway
+(`wa.racoai.io`, session `raco-erxes`, number +880 1343-831119). No Meta templates are needed.
+
+- Send: `POST {PULSE_OPENWA_URL}/api/sessions/{PULSE_OPENWA_SESSION_ID}/messages/send-text` with `X-API-Key`
+  and `{chatId: "<digits>@c.us", text}`. 409/503 (session reconnecting) are retried with backoff.
+- Inbound: OpenWA webhook (event `message.received`) to `POST /webhooks/pulse-openwa`, HMAC `X-OpenWA-Signature`
+  with `PULSE_OPENWA_WEBHOOK_SECRET`. Payloads older than 10 minutes are rejected. Only 1:1 phone chats on the
+  configured session count: `PULSE VERIFY <token>` verifies a number, and `STOP` (or `বন্ধ`) opts it out.
+- Env: `PULSE_WHATSAPP_PROVIDER=openwa`, `PULSE_OPENWA_URL=https://wa.racoai.io`, `PULSE_OPENWA_API_KEY`
+  (operator-role key), `PULSE_OPENWA_SESSION_ID`, `PULSE_OPENWA_WEBHOOK_SECRET`, `PULSE_WHATSAPP_NUMBER=+8801343831119`.
+- Accepted risk: OpenWA is an unofficial WhatsApp Web client, so the number can be banned. The number is shared
+  with erxes/xos, so a ban affects both, and xos also receives owners' VERIFY/STOP messages.
+
 ## Testing
 
 Unit tests (`tests/test_plans_alerts.py`), SQL behaviour checks, live suite `tests/integration_plans_alerts_local.py`, Next build, and a browser check of the header chip (normal and low) and the Plans tab.

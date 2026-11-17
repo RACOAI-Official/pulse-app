@@ -476,11 +476,26 @@ class InviteBody(BaseModel):
                        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _require_free_seat(tenant: str) -> None:
+    """Invites add a membership right away, so members (owner included) count against the plan's seats."""
+    from . import billing
+    plan = billing.effective_plan(tenant)
+    limit = billing.seat_limit(plan)
+    if limit is None:
+        return
+    members = service_request("GET", "memberships", params={"tenant_id": eq(tenant), "select": "user_id"})
+    if len(members) >= limit:
+        name = billing.NAMES[plan] if plan else "Your current"
+        raise HTTPException(402, f"{name} plan includes {limit} team member{'s' if limit != 1 else ''}. "
+                                 "Upgrade your plan to invite more")
+
+
 @app.post("/tenants/{tenant_id}/invites", dependencies=[user_limit("invite", 20, 3600)])
 async def invite_staff(tenant_id: UUID, data: InviteBody, auth: Session) -> dict:
     member = await membership(tenant_id, auth[0])
     if member["role"] != "owner":
         raise HTTPException(403, "Owner role required")
+    await asyncio.to_thread(_require_free_seat, str(tenant_id))
     invited = await asyncio.to_thread(service_auth_request, "POST", "invite",
         body={"email": data.email},
         params={"redirect_to": f"{get_settings().pulse_web_origin}/auth/callback"})
@@ -621,6 +636,7 @@ async def websocket_updates(websocket: WebSocket, ticket: Annotated[str, Query(m
         await client.aclose()
 
 
+from .account import router as account_router  # noqa: E402
 from .admin import router as admin_router  # noqa: E402
 from .commerce import router as commerce_router  # noqa: E402
 from .inbox_extra import router as inbox_extra_router  # noqa: E402
@@ -632,6 +648,7 @@ from .onboarding import router as onboarding_router  # noqa: E402
 from .meta_oauth import router as meta_oauth_router, callbacks as meta_oauth_callbacks  # noqa: E402
 from .notifications import router as notifications_router  # noqa: E402
 
+app.include_router(account_router)
 app.include_router(admin_router)
 app.include_router(commerce_router)
 app.include_router(inbox_extra_router)

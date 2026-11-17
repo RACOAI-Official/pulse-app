@@ -72,9 +72,9 @@ Existing tenants get a 30-day operator grant and 200 credits.
   - `PULSE_SSL_STORE_ID`
   - `PULSE_SSL_STORE_PASSWD`
   - `PULSE_SSL_ENVIRONMENT` (`sandbox` or `live`)
-- **Stripe Price IDs (8):** `PULSE_STRIPE_PRICE_{PRO|ENTERPRISE}_{MONTH|YEAR}_{USD|GBP}`. Create recurring Prices in Stripe whose amounts match the price table below.
-- **Price table:** `PULSE_PRICE_{PRO|ENTERPRISE}_{MONTH|YEAR}_{USD|GBP|BDT}`, in minor units. The defaults are the table above.
-- **Credit allowances:** `PULSE_CREDITS_PRO` (4000) and `PULSE_CREDITS_ENTERPRISE` (15000). The trial's 200 credits are set in SQL.
+- **Stripe Price IDs (12):** `PULSE_STRIPE_PRICE_{STARTER|PRO|ENTERPRISE}_{MONTH|YEAR}_{USD|GBP}`. Create recurring Prices in Stripe whose amounts match the price table below. Plan key `pro` is shown as **Business**. Since 2026-11-18: BDT list prices are Starter ৳4,999, Business ৳6,499, Enterprise ৳10,999 a month (yearly = 10×), set by migration. Starter USD/GBP defaults are $39 / £32 and need new Stripe prices in `PULSE_STRIPE_PRICE_STARTER_*`. Business and Enterprise USD/GBP defaults keep their launch amounts so grandfathered Stripe renewals match; move them to the target $55 / £45 and $95 / £75 from Admin → Plans, which creates the new Stripe prices.
+- **Price table:** `PULSE_PRICE_{STARTER|PRO|ENTERPRISE}_{MONTH|YEAR}_{USD|GBP|BDT}`, in minor units. The defaults are the table above.
+- **Credit allowances:** `PULSE_CREDITS_STARTER` (1000), `PULSE_CREDITS_PRO` (4000) and `PULSE_CREDITS_ENTERPRISE` (12000). The trial's 200 credits are set in SQL.
 - **Policy pages:** `PULSE_TERMS_URL`, `PULSE_PRIVACY_URL`, `PULSE_REFUND_URL`. These must be HTTPS for live keys.
 
 Register the Stripe webhook for these events:
