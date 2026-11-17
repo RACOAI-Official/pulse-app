@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { Camera, Mail, MessageCircle, ShieldCheck, Users, Send, Activity } from "@/components/icons";
+import AccountSecurity from "@/components/AccountSecurity";
 import NotificationSettings from "@/components/NotificationSettings";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import styles from "../studio.module.css";
@@ -39,6 +40,7 @@ function SettingsContent({ tenantId, role }: { tenantId: string; role: "owner" |
   ] as const;
 
   return <main className={`${styles.studio} settings-page`}><div className="settings-intro"><h1>Settings</h1><p>Channel credentials are managed by your Pulse operator. Owners can invite staff into this shared inbox.</p></div>
+    <AccountSecurity />
     <section className="settings-section"><div className="settings-section-heading"><div><h2>Connected channels</h2></div><ShieldCheck size={20} /></div>
       <div className="channel-grid">{channelInfo.map(info => { const row = channels.find(item => item.channel === info.key); const Icon = info.icon; return <div className="channel-tile" key={info.key}><div className={`channel-icon ${info.key}`}><Icon size={23} /></div><div><strong>{info.label}</strong><p>{row?.display_name || info.caption}</p></div><span className={row?.status === "connected" ? "status connected" : "status"}>{row?.status === "connected" ? "Connected" : "Not connected"}</span></div>; })}</div>
       <p className="settings-note">Connect or rotate credentials with the operator CLI. Tokens are encrypted and never sent to the browser.</p>

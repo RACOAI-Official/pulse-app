@@ -5,8 +5,8 @@ import { ArrowRight, Check } from "@/components/icons";
 import { api } from "@/lib/api";
 import { SectionSkeleton } from "@/components/LoadingFeedback";
 import { CURRENCIES, type Currency, detectCurrency, formatMoney, rememberCurrency } from "@/lib/currency";
+import { PLAN_COPY, PLAN_RANK, type PlanKey, planName } from "@/lib/plans";
 
-type PlanKey = "pro" | "enterprise";
 type Interval = "month" | "year";
 type Plan = { key: PlanKey; name: string; credits: number; conversations_per_day: number; prices: Record<Interval, Record<Currency, number>> };
 type Account = {
@@ -19,8 +19,10 @@ type Invoice = { id: string; plan_key: PlanKey; billing_interval: Interval; kind
 type Status = {
   account: Account | null; credits: Credits | null; invoices: Invoice[]; access: boolean;
   providers: { stripe: boolean; sslcommerz: boolean }; policies: { terms: string; privacy: string; refund: string };
-  upgrade_quote: { amount_minor: number; currency_code: Currency; estimate: boolean } | null; plans: Plan[];
+  upgrade_quotes: Partial<Record<PlanKey, Quote>>; plans: Plan[];
+  grant: { plan_key: PlanKey; access_until: string } | null; effective_plan: PlanKey | null; seat_limit: number | null;
 };
+type Quote = { amount_minor: number; currency_code: Currency; estimate: boolean };
 
 const DAY = 86400000;
 const emptyContact = { billing_name: "", billing_phone: "", billing_address: "", billing_city: "", billing_postcode: "" };
@@ -122,19 +124,19 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
     if (result) window.location.assign(result.checkout_url);
   }
 
-  async function upgrade() {
-    const quote = status?.upgrade_quote;
+  async function upgrade(plan: PlanKey) {
+    const quote = status?.upgrade_quotes?.[plan];
     const amount = quote ? formatMoney(quote.amount_minor, quote.currency_code) : "the prorated difference";
-    if (!window.confirm(`Upgrade to Enterprise now? You pay ${quote?.estimate ? "about " : ""}${amount} for the rest of this term and get the extra credits immediately.`)) return;
-    const result = await act(() => api<{ checkout_url?: string; status?: string }>(`/tenants/${tenantId}/billing/upgrade`, { method: "POST" }), "Upgrade failed");
+    if (!window.confirm(`Upgrade to ${planName(plan)} now? You pay ${quote?.estimate ? "about " : ""}${amount} for the rest of this term and get the extra credits immediately.`)) return;
+    const result = await act(() => api<{ checkout_url?: string; status?: string }>(`/tenants/${tenantId}/billing/upgrade`, { method: "POST", body: JSON.stringify({ plan }) }), "Upgrade failed");
     if (result?.checkout_url) window.location.assign(result.checkout_url);
-    else if (result) { await refresh(); setNotice("Upgraded to Enterprise. Your extra credits are ready."); }
+    else if (result) { await refresh(); setNotice(`Upgraded to ${planName(plan)}. Your extra credits are ready.`); }
   }
 
-  async function downgrade() {
-    if (!window.confirm(`Switch to Pro when this term ends on ${date(account?.paid_through)}? You keep Enterprise until then.`)) return;
-    if (await act(() => api(`/tenants/${tenantId}/billing/downgrade`, { method: "POST" }), "Could not schedule the change")) {
-      await refresh(); setNotice(`Pro starts at your next renewal on ${date(account?.paid_through)}.`);
+  async function downgrade(plan: PlanKey) {
+    if (!window.confirm(`Switch to ${planName(plan)} when this term ends on ${date(account?.paid_through)}? You keep ${planName(account?.plan_key)} until then.`)) return;
+    if (await act(() => api(`/tenants/${tenantId}/billing/downgrade`, { method: "POST", body: JSON.stringify({ plan }) }), "Could not schedule the change")) {
+      await refresh(); setNotice(`${planName(plan)} starts at your next renewal on ${date(account?.paid_through)}.`);
     }
   }
 
@@ -147,13 +149,14 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
     const list: { tone: "warn" | "info"; text: string }[] = [];
     if (!status) return list;
     if (!status.access) list.push({ tone: "warn", text: "Your workspace has no active plan. AI replies, sending, and edits are paused until you choose a plan." });
-    if (trialActive) list.push({ tone: "info", text: `Free trial: ${credits?.balance ?? 0} AI credits left, ends ${date(account?.trial_ends_at)}. Choose a plan anytime — your trial ends when it starts.` });
+    if (trialActive && !status.grant) list.push({ tone: "info", text: `Free trial: ${credits?.balance ?? 0} AI credits left, ends ${date(account?.trial_ends_at)}. Choose a plan anytime — your trial ends when it starts.` });
     const bonus = credits?.bonus_balance ?? 0;
     if (status.access && credits && credits.allowance > 0 && credits.balance === 0 && bonus > 0) list.push({ tone: "info", text: `Plan credits used up. AI replies now use your ${bonus.toLocaleString()} bonus credits until the reset on ${date(credits.cycle_end)}.` });
-    else if (status.access && credits && credits.allowance > 0 && credits.balance === 0) list.push({ tone: "warn", text: `AI credits used up. AI auto-replies are paused and new messages wait in the Inbox for your team. Credits reset on ${date(credits.cycle_end)}${account?.plan_key === "pro" && paidActive ? ", or upgrade to Enterprise for more now" : ""}.` });
+    else if (status.access && credits && credits.allowance > 0 && credits.balance === 0) list.push({ tone: "warn", text: `AI credits used up. AI auto-replies are paused and new messages wait in the Inbox for your team. Credits reset on ${date(credits.cycle_end)}${account?.plan_key && account.plan_key !== "enterprise" && paidActive ? ", or upgrade for more now" : ""}.` });
     else if (status.access && used >= 0.8) list.push({ tone: "warn", text: `You have used ${Math.round(used * 100)}% of this month's AI credits.` });
     if (sslRenewalOpen) list.push({ tone: "warn", text: `Your ${account?.billing_interval === "year" ? "yearly" : "monthly"} term ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}. Renew now so service continues without a gap.` });
-    if (account?.pending_plan_key && paidActive) list.push({ tone: "info", text: `Switching to ${account.pending_plan_key === "pro" ? "Pro" : "Enterprise"} at renewal on ${date(account.paid_through)}.` });
+    if (account?.pending_plan_key && paidActive) list.push({ tone: "info", text: `Switching to ${planName(account.pending_plan_key)} at renewal on ${date(account.paid_through)}.` });
+    if (status.grant && !paidActive) list.push({ tone: "info", text: `${planName(status.grant.plan_key)} plan, assigned by Pulse until ${date(status.grant.access_until)}.` });
     return list;
   }, [status, trialActive, credits, account, paidActive, used, sslRenewalOpen, daysLeft]);
 
@@ -163,13 +166,13 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
       if (sslRenewalOpen && renewPlan === plan.key) return <button className="button primary wide" disabled={busy} onClick={() => setSelected(plan.key)}>Renew {plan.name}</button>;
       return <button className="button wide" disabled>Current plan</button>;
     }
-    if (paidActive && account?.plan_key === "pro" && plan.key === "enterprise") {
-      const quote = status?.upgrade_quote;
-      return <button className="button primary wide" disabled={busy || !quote?.amount_minor} onClick={upgrade}>Upgrade now{quote?.amount_minor ? ` · ${quote.estimate ? "≈ " : ""}${formatMoney(quote.amount_minor, quote.currency_code)}` : ""}</button>;
+    if (paidActive && account?.plan_key && PLAN_RANK[plan.key] > PLAN_RANK[account.plan_key]) {
+      const quote = status?.upgrade_quotes?.[plan.key];
+      return <button className="button primary wide" disabled={busy || !quote?.amount_minor} onClick={() => upgrade(plan.key)}>Upgrade now{quote?.amount_minor ? ` · ${quote.estimate ? "≈ " : ""}${formatMoney(quote.amount_minor, quote.currency_code)}` : ""}</button>;
     }
-    if (paidActive && account?.plan_key === "enterprise" && plan.key === "pro") {
-      if (account.pending_plan_key === "pro") return <>{sslRenewalOpen && <button className="button primary wide" disabled={busy} onClick={() => setSelected("pro")}>Renew on Pro</button>}<button className="button wide" disabled>Starts {date(account.paid_through)}</button></>;
-      return <button className="button subtle wide" disabled={busy} onClick={downgrade}>Switch at renewal</button>;
+    if (paidActive && account?.plan_key && PLAN_RANK[plan.key] < PLAN_RANK[account.plan_key]) {
+      if (account.pending_plan_key === plan.key) return <>{sslRenewalOpen && <button className="button primary wide" disabled={busy} onClick={() => setSelected(plan.key)}>Renew on {plan.name}</button>}<button className="button wide" disabled>Starts {date(account.paid_through)}</button></>;
+      return <button className="button subtle wide" disabled={busy} onClick={() => downgrade(plan.key)}>Switch at renewal</button>;
     }
     return <button className={`button wide ${selected === plan.key ? "primary" : ""}`} disabled={busy} onClick={() => setSelected(plan.key)}>{selected === plan.key ? "Selected" : `Choose ${plan.name}`}</button>;
   }
@@ -181,7 +184,7 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
 
   return <main className={`commerce-page plan-page ${onboarding ? "plan-page-onboarding" : ""}`}>
     <header className="commerce-heading plan-heading">
-      <div><span className="eyebrow">Plan</span><h1>{onboarding ? "Pick how you start" : <>Plans &amp; AI credits</>}</h1><p>{onboarding ? "Start free to set up and preview your AI, or go Pro to connect Messenger, Instagram and WhatsApp right away." : "One credit covers one AI auto-reply to a customer. Credits reset every month and do not roll over."}</p></div>
+      <div><span className="eyebrow">Plan</span><h1>{onboarding ? "Pick how you start" : <>Plans &amp; AI credits</>}</h1><p>{onboarding ? "Start free to set up and preview your AI, or pick a plan to connect Messenger, Instagram and WhatsApp right away." : "One credit covers one AI auto-reply to a customer. Credits reset every month and do not roll over."}</p></div>
       <div className="plan-toggles" aria-label="Pricing options">
         <div className="plan-segment" role="radiogroup" aria-label="Billing interval">
           {(["month", "year"] as Interval[]).map(value => <button key={value} role="radio" aria-checked={interval === value} className={interval === value ? "on" : ""} disabled={lockedTerms} onClick={() => setTermInterval(value)}>{value === "month" ? "Monthly" : <>Yearly <b>2 months free</b></>}</button>)}
@@ -199,12 +202,13 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
     {!onboarding && <section className="plan-status">
       <div className="commerce-card plan-current">
         <span className="eyebrow">Current plan</span>
-        <h2>{paidActive && account?.plan_key ? `${account.plan_key === "pro" ? "Pro" : "Enterprise"} · ${account.billing_interval === "year" ? "Yearly" : "Monthly"}` : trialActive ? "Free trial" : status?.access ? "Operator access" : "No active plan"}</h2>
+        <h2>{paidActive && account?.plan_key ? `${planName(account.plan_key)} · ${account.billing_interval === "year" ? "Yearly" : "Monthly"}` : status?.grant ? `${planName(status.grant.plan_key)} · assigned by Pulse` : trialActive ? "Free trial" : status?.access ? "Operator access" : "Free · no active plan"}</h2>
         <p>{paidActive
           ? account?.provider === "stripe"
             ? account.auto_renew ? `Renews automatically on ${date(account.paid_through)} via Stripe (${account.currency_code}).` : `Active until ${date(account.paid_through)}. Auto-renewal is off.`
             : `Prepaid via SSLCOMMERZ until ${date(account?.paid_through)}. Renew from 7 days before it ends.`
-          : trialActive ? `Trial ends ${date(account?.trial_ends_at)}.` : "Choose Pro or Enterprise below to start."}</p>
+          : status?.grant ? `Active until ${date(status.grant.access_until)}. No payment needed.`
+          : trialActive ? `Trial ends ${date(account?.trial_ends_at)}.` : "Choose Starter, Business or Enterprise below to start."}</p>
         {isOwner && paidActive && account?.provider === "stripe" && <div className="commerce-actions">
           <button className="button subtle" disabled={busy} onClick={() => changeRenewal(!account.auto_renew)}>{account.auto_renew ? "Stop auto-renewal" : "Turn on auto-renewal"}</button>
         </div>}
@@ -235,17 +239,23 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
       </article>}
       {status?.plans.map((plan, index) => {
         const amount = plan.prices[interval][currency];
-        const monthlyEquivalent = interval === "year" ? Math.round(amount / 12) : null;
-        const current = paidActive && account?.plan_key === plan.key;
-        return <article key={plan.key} className={`plan-card ${plan.key} ${current ? "current" : ""} ${selected === plan.key ? "selected" : ""}`} style={{ animationDelay: `${index * 70}ms` }}>
-          <header><h2>{plan.name}</h2>{current ? <span className="plan-tag">Your plan</span> : plan.key === "enterprise" ? <span className="plan-tag alt">Most capacity</span> : null}</header>
-          <div className="plan-price"><strong>{formatMoney(amount, currency)}</strong><span>/ {interval === "year" ? "year" : "month"}</span></div>
-          <p className="plan-sub">{monthlyEquivalent ? `${formatMoney(monthlyEquivalent, currency)}/month billed yearly — 2 months free` : "Billed monthly. Cancel anytime."}</p>
+        // Whole currency units, like the published price list (৳49,990 a year shows as ৳4,166/month).
+        const monthlyEquivalent = interval === "year" ? Math.round(amount / 1200) * 100 : null;
+        const current = (paidActive && account?.plan_key === plan.key) || (!paidActive && status?.effective_plan === plan.key);
+        const copy = PLAN_COPY[plan.key];
+        return <article key={plan.key} className={`plan-card ${plan.key} ${copy.featured ? "featured" : ""} ${current ? "current" : ""} ${selected === plan.key ? "selected" : ""}`} style={{ animationDelay: `${index * 70}ms` }}>
+          <header><h2>{plan.name}</h2>{current ? <span className="plan-tag">Your plan</span> : copy.featured ? <span className="plan-tag alt">Most popular</span> : null}</header>
+          <p className="plan-for">{copy.tagline}</p>
+          <div className="plan-price"><strong>{formatMoney(monthlyEquivalent ?? amount, currency)}</strong><span>/month</span></div>
+          <p className="plan-sub">{monthlyEquivalent ? `Billed ${formatMoney(amount, currency)} yearly — 2 months free` : "Billed monthly. Cancel anytime."}</p>
+          {copy.website && <div className="plan-site">
+            <div className="plan-site-frame" aria-hidden="true"><div className="plan-site-bar"><i /><i /><i /></div><div className="plan-site-body"><b /><b /><b /><b /><b /><b /></div></div>
+            <div><p className="plan-site-title">Your own store website, included</p><p className="plan-site-sub"><s>Usually ৳25,000+</s> free with a 6-month plan</p></div>
+          </div>}
+          <p className="plan-includes">{copy.includes}</p>
           <ul>
-            <li><Check size={14} weight="bold" /><span><b>{plan.credits.toLocaleString()}</b> AI credits every month</span></li>
-            <li><Check size={14} weight="bold" /><span>About <b>{plan.conversations_per_day}</b> customer chats a day (~8 replies each)</span></li>
-            <li><Check size={14} weight="bold" /><span>Messenger, Instagram &amp; WhatsApp AI replies</span></li>
-            <li><Check size={14} weight="bold" /><span>Your team takes over in the Inbox when credits run out</span></li>
+            <li><Check size={14} weight="bold" /><span><b>{plan.credits.toLocaleString()}</b> AI replies a month (about {plan.conversations_per_day} chats a day)</span></li>
+            {copy.features.map(feature => <li key={feature}><Check size={14} weight="bold" /><span>{feature}</span></li>)}
           </ul>
           <div className="plan-card-action">{cardAction(plan)}</div>
         </article>;
@@ -274,12 +284,17 @@ export default function PlanPicker({ tenantId, role, returnTo = "plan", onFree }
       </div>
     </section>}
 
+    <div className="plan-all">
+      <p><strong>Every plan includes</strong> guided setup, an AI trained on your own products and policies, and support in Bangla.</p>
+      <p className="settings-note">The website is free on 6-month and yearly plans and stays live while you’re subscribed.</p>
+    </div>
+
     {!isOwner && <p className="settings-note">Only the workspace owner can buy or change the plan.</p>}
 
     {!onboarding && <section className="commerce-card">
       <h2>Payment history</h2>
       {status?.invoices.length ? status.invoices.map(invoice => <div className="order-summary-row" key={invoice.id}>
-        <span>{invoice.kind === "upgrade" ? "Upgrade to Enterprise" : `${invoice.plan_key === "pro" ? "Pro" : "Enterprise"} · ${invoice.billing_interval === "year" ? "yearly" : "monthly"}`} · {invoice.provider === "stripe" ? "Stripe" : "SSLCOMMERZ"} · <span className={`commerce-state ${invoice.state === "paid" ? "completed" : invoice.state === "failed" ? "cancelled" : ""}`}>{invoice.state}</span> · {date(invoice.paid_at || invoice.created_at)}</span>
+        <span>{invoice.kind === "upgrade" ? `Upgrade to ${planName(invoice.plan_key)}` : `${planName(invoice.plan_key)} · ${invoice.billing_interval === "year" ? "yearly" : "monthly"}`} · {invoice.provider === "stripe" ? "Stripe" : "SSLCOMMERZ"} · <span className={`commerce-state ${invoice.state === "paid" ? "completed" : invoice.state === "failed" ? "cancelled" : ""}`}>{invoice.state}</span> · {date(invoice.paid_at || invoice.created_at)}</span>
         <strong>{formatMoney(invoice.amount_minor, invoice.currency_code)}</strong>
       </div>) : <p>No subscription payments yet.</p>}
     </section>}

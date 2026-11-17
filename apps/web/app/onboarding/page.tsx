@@ -21,7 +21,7 @@ const rail: { key: Step; label: string; hint: string; proOnly?: boolean }[] = [
   { key: "business", label: "Business", hint: "Name your shop" },
   { key: "ai", label: "AI setup", hint: "Voice, policies, preview" },
   { key: "delivery", label: "Delivery", hint: "Fees and timing" },
-  { key: "plan", label: "Plan", hint: "Free trial or Pro" },
+  { key: "plan", label: "Plan", hint: "Free trial or a paid plan" },
   { key: "integrations", label: "Integrations", hint: "Connect channels", proOnly: true },
   { key: "inbox", label: "Inbox", hint: "How chats work", proOnly: true },
 ];
@@ -67,7 +67,7 @@ export default function OnboardingPage() {
       if (next?.paid) {
         window.clearInterval(timer);
         await api(`/tenants/${tenantId}/onboarding/flow`, { method: "PUT", body: JSON.stringify({ step: "integrations" }) }).catch(() => {});
-        setStep("integrations"); setNotice("Payment confirmed. Welcome to Pro! Now connect your channels.");
+        setStep("integrations"); setNotice("Payment confirmed. Welcome aboard! Now connect your channels.");
       } else if (tries >= 30) {
         window.clearInterval(timer);
         setStep("plan");
@@ -122,7 +122,7 @@ export default function OnboardingPage() {
         return <li key={item.key} className={`onb-step ${state} ${item.proOnly ? "pro" : ""}`}>
           <button type="button" disabled={!enabled} onClick={() => go(item.key)} aria-current={state === "current" ? "step" : undefined}>
             <span className="onb-step-dot">{state === "done" ? <Check size={13} weight="bold" /> : position + 1}</span>
-            <span className="onb-step-copy"><strong>{item.label}{item.proOnly && <em>Pro</em>}</strong><small>{item.hint}</small></span>
+            <span className="onb-step-copy"><strong>{item.label}{item.proOnly && <em>Paid</em>}</strong><small>{item.hint}</small></span>
           </button>
         </li>;
       })}</ol>
@@ -144,7 +144,7 @@ export default function OnboardingPage() {
         {step === "delivery" && <DeliveryStep tenantId={tenantId} onBack={() => go("ai")} onDone={() => go("plan")} />}
         {step === "plan" && <div className="onb-wide">
           {flow?.paid
-            ? <section className="onb-card onb-narrow"><h1>You’re on Pro</h1><p>Your plan is active. Connect your channels next.</p>
+            ? <section className="onb-card onb-narrow"><h1>Your plan is active</h1><p>Your plan is active. Connect your channels next.</p>
                 <div className="onb-actions"><button className="button subtle" onClick={() => go("delivery")}><ArrowLeft size={16} /> Back</button><button className="button primary" onClick={() => go("integrations")}>Connect channels <ArrowRight size={16} /></button></div></section>
             : <>
                 <PlanPicker tenantId={tenantId} role="owner" returnTo="onboarding" onFree={chooseFree} />

@@ -15,8 +15,8 @@ from .store import eq, service_request
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
-PLAN_NAMES = {"bangla": {"trial": "ফ্রি ট্রায়াল", "pro": "Pro", "enterprise": "Enterprise"},
-              "english": {"trial": "Free trial", "pro": "Pro", "enterprise": "Enterprise"}}
+PLAN_NAMES = {"bangla": {"trial": "ফ্রি ট্রায়াল", "starter": "Starter", "pro": "Business", "enterprise": "Enterprise"},
+              "english": {"trial": "Free trial", "starter": "Starter", "pro": "Business", "enterprise": "Enterprise"}}
 PAYMENT = {"bangla": {"paid": "পরিশোধিত", "partial": "আংশিক পরিশোধিত", "unpaid": "অপরিশোধিত"},
            "english": {"paid": "Paid", "partial": "Partially paid", "unpaid": "Unpaid"}}
 LABELS = {"bangla": {"business": "ব্যবসা", "order": "অর্ডার", "customer": "ক্রেতা", "units": "পণ্যের পরিমাণ",
@@ -143,10 +143,53 @@ def email_ready() -> bool:
     return bool(s.resend_api_key or (s.mail_host and s.mail_user and s.mail_pass))
 
 
+def openwa_mode() -> bool:
+    return get_settings().pulse_whatsapp_provider == "openwa"
+
+
 def whatsapp_ready() -> bool:
     s = get_settings()
+    if openwa_mode():
+        return bool(s.pulse_openwa_url.startswith("https://") and s.pulse_openwa_api_key and s.pulse_openwa_session_id
+                    and s.pulse_openwa_webhook_secret and s.pulse_whatsapp_number)
     return bool(s.pulse_whatsapp_phone_id and s.pulse_whatsapp_number and s.pulse_whatsapp_token
                 and s.pulse_whatsapp_app_secret)
+
+
+def render_text(delivery: dict) -> str:
+    """Plain WhatsApp text for gateways that send free-form messages (OpenWA)."""
+    c = content(delivery)
+    lines = [f"*{c['subject']}*", "", c["intro"], ""] + [f"{label}: {value}" for label, value in c["rows"]]
+    if c["cta"]:
+        lines += ["", f"{c['cta'][0]}: {c['cta'][1]}"]
+    stop = "বন্ধ করতে STOP লিখুন।" if delivery["language"] == "bangla" else "Reply STOP to stop these alerts."
+    return "\n".join(lines + ["", stop])[:4000]
+
+
+def send_openwa(delivery: dict) -> str:
+    s = get_settings()
+    url = f"{s.pulse_openwa_url.rstrip('/')}/api/sessions/{s.pulse_openwa_session_id}/messages/send-text"
+    body = {"chatId": delivery["destination"].lstrip("+") + "@c.us", "text": render_text(delivery)}
+    headers = {"X-API-Key": s.pulse_openwa_api_key, "Idempotency-Key": f"pulse-{delivery['id']}-{delivery['claim_token']}"}
+    try:
+        with httpx.Client(timeout=20) as client:
+            response = client.post(url, headers=headers, json=body)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise DeliveryFailure("retry", type(exc).__name__) from exc
+    except httpx.HTTPError as exc:
+        raise DeliveryFailure("uncertain", type(exc).__name__) from exc
+    # 409 engine not ready, 503 recipient lookup unavailable: the session is reconnecting.
+    if response.status_code in (409, 429, 502, 503, 504):
+        raise DeliveryFailure("retry", f"OpenWA not ready ({response.status_code})")
+    if response.status_code >= 500:
+        raise DeliveryFailure("uncertain", f"OpenWA server error ({response.status_code})")
+    if response.status_code >= 400:
+        raise DeliveryFailure("failed", f"OpenWA rejected the request ({response.status_code})")
+    try:
+        data = response.json()
+        return str(data.get("messageId") or data.get("id") or "")[:200] or "openwa"
+    except ValueError:
+        return "openwa"
 
 
 def send_email(destination: str, subject: str, text: str, html: str) -> str:
@@ -167,6 +210,8 @@ def send_whatsapp(delivery: dict) -> str:
     settings = get_settings()
     if not whatsapp_ready():
         raise DeliveryFailure("failed", "Pulse WhatsApp is not configured")
+    if openwa_mode():
+        return send_openwa(delivery)
     template = getattr(settings, f"pulse_whatsapp_template_{delivery['kind']}", "")
     if not template:
         raise DeliveryFailure("suppressed", "WhatsApp template not configured")

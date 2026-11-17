@@ -71,6 +71,16 @@ class UnsuspendInput(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class AssignPlanInput(BaseModel):
+    plan: Literal["starter", "pro", "enterprise"]
+    months: int = Field(ge=1, le=24)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class RevokePlanInput(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 @router.get("/me")
 async def me(auth: Operator) -> dict:
     return {"operator": True, "email": auth[1].get("email")}
@@ -115,6 +125,23 @@ async def unsuspend(tenant_id: UUID, data: UnsuspendInput, auth: Operator) -> di
     })
 
 
+@router.post("/businesses/{tenant_id}/plan", dependencies=[user_limit("admin-write", 60, 60)])
+async def assign_plan(tenant_id: UUID, data: AssignPlanInput, auth: Operator) -> dict:
+    """Put a business on a plan for N months; re-assigning replaces (extends or changes) the grant."""
+    return await _rpc("pulse_admin_assign_plan", auth[0], {
+        "p_tenant_id": str(tenant_id), "p_plan": data.plan, "p_months": data.months,
+        "p_reason": data.reason.strip(), "p_allowance": billing.allowance(data.plan),
+    })
+
+
+@router.post("/businesses/{tenant_id}/plan/revoke", dependencies=[user_limit("admin-write", 60, 60)])
+async def revoke_plan(tenant_id: UUID, data: RevokePlanInput, auth: Operator) -> dict:
+    """End an assigned plan now. A paid subscription the business bought itself keeps working."""
+    return await _rpc("pulse_admin_revoke_plan", auth[0], {
+        "p_tenant_id": str(tenant_id), "p_reason": data.reason.strip(),
+    })
+
+
 @router.get("/users")
 async def users(auth: Operator, q: Search = "", page: Page = 1) -> dict:
     return await _rpc("pulse_admin_users", auth[0], {"p_q": q, **_paging(page)})
@@ -144,7 +171,7 @@ async def audit(auth: Operator, page: Page = 1) -> dict:
 
 
 class PriceInput(BaseModel):
-    plan: Literal["pro", "enterprise"]
+    plan: Literal["starter", "pro", "enterprise"]
     interval: Literal["month", "year"]
     currency: Literal["USD", "GBP", "BDT"]
     amount_minor: int = Field(ge=100, le=1_000_000_000, description="Minor units: cents, pence or paisa")

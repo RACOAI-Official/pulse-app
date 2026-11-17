@@ -56,7 +56,7 @@ def tenant_store(monkeypatch, step="plan"):
 @pytest.mark.asyncio
 async def test_trial_cannot_enter_paid_steps(monkeypatch, owner_ok):
     state = tenant_store(monkeypatch)
-    monkeypatch.setattr(billing, "account", lambda _: {"state": "trialing", "paid_through": None})
+    monkeypatch.setattr(billing, "effective_plan", lambda _: None)
     with pytest.raises(HTTPException) as blocked:
         await onboarding.move(TENANT, onboarding.FlowInput(step="integrations"), AUTH)
     assert blocked.value.status_code == 402 and state["step"] == "plan"
@@ -67,7 +67,7 @@ async def test_trial_cannot_enter_paid_steps(monkeypatch, owner_ok):
 @pytest.mark.asyncio
 async def test_paid_owner_reaches_integrations_and_completes(monkeypatch, owner_ok):
     state = tenant_store(monkeypatch)
-    monkeypatch.setattr(billing, "account", lambda _: {"state": "active", "paid_through": "2999-01-01T00:00:00+00:00"})
+    monkeypatch.setattr(billing, "effective_plan", lambda _: "pro")
     await onboarding.move(TENANT, onboarding.FlowInput(step="integrations"), AUTH)
     assert state["step"] == "integrations"
     result = await onboarding.complete(TENANT, AUTH)

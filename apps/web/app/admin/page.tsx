@@ -4,16 +4,17 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { formatMoney } from "@/lib/currency";
+import { PLAN_KEYS, PLAN_NAMES, type PlanKey, planName } from "@/lib/plans";
 import { useWorkspace } from "@/lib/workspace";
 import PulseMark from "@/components/PulseMark";
 import { BootLoading, SectionSkeleton } from "@/components/LoadingFeedback";
 
 type Paged<T> = { total: number; rows: T[] };
 type Overview = { businesses: number; paid: number; trialing: number; suspended: number; users: number; signups_7d: number; payments_review: number; revenue_30d: Record<string, number>; connected_channels: number; failed_webhooks: number; problem_sends: number };
-type Business = { id: string; name: string; created_at: string; suspended_at: string | null; suspended_reason: string | null; owner_email: string | null; plan_key: string | null; billing_state: string | null; provider: string | null; paid_through: string | null; trial_ends_at: string | null; balance: number | null; allowance: number | null; bonus_balance: number; members: number; access: boolean };
+type Business = { grant_plan_key?: string | null; grant_until?: string | null; id: string; name: string; created_at: string; suspended_at: string | null; suspended_reason: string | null; owner_email: string | null; plan_key: string | null; billing_state: string | null; provider: string | null; paid_through: string | null; trial_ends_at: string | null; balance: number | null; allowance: number | null; bonus_balance: number; members: number; access: boolean };
 type LedgerRow = { id: number; tenant_id?: string; tenant_name?: string; delta: number; reason: string; bucket: string; note: string | null; created_at: string; actor_email: string | null };
 type Invoice = { id: string; tenant_id?: string; tenant_name?: string; plan_key: string; billing_interval: string; kind: string; provider: string; amount_minor: number; currency_code: string; state: string; provider_transaction_id: string | null; paid_at: string | null; created_at: string };
-type Detail = { tenant: { id: string; name: string; created_at: string; currency_code: string; suspended_at: string | null; suspended_reason: string | null }; access: boolean; billing: { plan_key: string | null; state: string; provider: string | null; billing_interval: string | null; paid_through: string | null; trial_ends_at: string | null; auto_renew: boolean; billing_email: string | null } | null; operator_grant: { access_until: string; reason: string } | null; credits: { allowance: number; balance: number; bonus_balance: number; cycle_end: string } | null; ai_replies_30d: number; members: { user_id: string; email: string; role: string; joined_at: string; last_sign_in_at: string | null }[]; counts: Record<string, number>; invoices: Invoice[]; ledger: LedgerRow[] };
+type Detail = { tenant: { id: string; name: string; created_at: string; currency_code: string; suspended_at: string | null; suspended_reason: string | null }; access: boolean; billing: { plan_key: string | null; state: string; provider: string | null; billing_interval: string | null; paid_through: string | null; trial_ends_at: string | null; auto_renew: boolean; billing_email: string | null } | null; operator_grant: { access_until: string; reason: string; plan_key: PlanKey | null; months: number | null } | null; credits: { allowance: number; balance: number; bonus_balance: number; cycle_end: string } | null; ai_replies_30d: number; members: { user_id: string; email: string; role: string; joined_at: string; last_sign_in_at: string | null }[]; counts: Record<string, number>; invoices: Invoice[]; ledger: LedgerRow[] };
 type User = { id: string; email: string; created_at: string; last_sign_in_at: string | null; email_confirmed_at: string | null; is_operator: boolean; workspaces: { tenant_id: string; name: string; role: string }[] };
 type Audit = { id: number; action: string; tenant_id: string | null; tenant_name: string | null; details: Record<string, unknown>; created_at: string; actor_email: string | null };
 
@@ -31,9 +32,10 @@ const dateTime = (value?: string | null) => value ? new Date(value).toLocaleStri
 const label = (value?: string | null) => value ? value.replace(/_/g, " ") : "—";
 const qs = (params: Record<string, string | number | undefined>) => new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString();
 
-function status(row: Pick<Business, "suspended_at" | "access" | "billing_state">) {
+function status(row: Pick<Business, "suspended_at" | "access" | "billing_state" | "grant_plan_key">) {
   if (row.suspended_at) return { text: "Suspended", tone: "cancelled" };
   if (!row.access) return { text: "No access", tone: "archived" };
+  if (row.grant_plan_key && row.billing_state !== "active") return { text: "Assigned", tone: "completed" };
   return { text: row.billing_state === "trialing" ? "Trial" : "Paid", tone: row.billing_state === "trialing" ? "draft" : "completed" };
 }
 
@@ -74,6 +76,9 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
+  const [grantPlan, setGrantPlan] = useState<PlanKey>("pro");
+  const [grantMonths, setGrantMonths] = useState("3");
+  const [grantReason, setGrantReason] = useState("");
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const load = useCallback(() => { api<Detail>(`/admin/businesses/${id}`).then(setData).catch(caught => setError(caught.message)); }, [id]);
   useEffect(load, [load]);
@@ -106,6 +111,34 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
     finally { setBusy(false); }
   }
 
+  const grant = data?.operator_grant?.plan_key && new Date(data.operator_grant.access_until).getTime() > Date.now() ? data.operator_grant : null;
+
+  async function assignPlan(event: FormEvent) {
+    event.preventDefault();
+    const months = Number(grantMonths);
+    const until = new Date(); until.setMonth(until.getMonth() + months);
+    if (!window.confirm(`Put ${data?.tenant.name} on ${PLAN_NAMES[grantPlan]} for ${months} month${months === 1 ? "" : "s"} (until about ${date(until.toISOString())})?${grant ? `\n\nThis replaces the current ${planName(grant.plan_key)} assignment.` : ""}\n\nPlan credits reset to the ${PLAN_NAMES[grantPlan]} monthly allowance now. No payment is taken.`)) return;
+    setBusy(true); setNotice("");
+    try {
+      const result = await api<{ plan_key: PlanKey; access_until: string }>(`/admin/businesses/${id}/plan`, { method: "POST", body: JSON.stringify({ plan: grantPlan, months, reason: grantReason }) });
+      setNotice(`${planName(result.plan_key)} assigned until ${date(result.access_until)}.`);
+      setGrantReason(""); load(); onChanged();
+    } catch (caught) { setNotice(caught instanceof Error ? caught.message : "Could not assign the plan"); }
+    finally { setBusy(false); }
+  }
+
+  async function revokePlan() {
+    if (grantReason.trim().length < 3) { setNotice("Enter a reason (3+ characters) before revoking."); return; }
+    if (!window.confirm(`Revoke ${planName(grant?.plan_key)} from ${data?.tenant.name} now? It drops to free: assigned plan credits are removed and paid features stop, unless the business pays for its own plan.`)) return;
+    setBusy(true); setNotice("");
+    try {
+      await api(`/admin/businesses/${id}/plan/revoke`, { method: "POST", body: JSON.stringify({ reason: grantReason }) });
+      setNotice("Plan revoked. The business is on free now.");
+      setGrantReason(""); load(); onChanged();
+    } catch (caught) { setNotice(caught instanceof Error ? caught.message : "Could not revoke the plan"); }
+    finally { setBusy(false); }
+  }
+
   return <aside className="admin-drawer" role="dialog" aria-modal="true" aria-label="Business details">
     <div className="admin-drawer-head"><div><span className="eyebrow">Business</span><h2>{data?.tenant.name || "Loading…"}</h2>{data && <small>{data.tenant.id}</small>}</div><button className="button subtle" onClick={onClose}>Close</button></div>
     {error && <p className="form-notice" role="alert">{error}</p>}
@@ -114,15 +147,15 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
       {data.tenant.suspended_at && <p className="form-notice plan-banner warn">Suspended {dateTime(data.tenant.suspended_at)}: {data.tenant.suspended_reason}</p>}
       <div className="admin-kv">
         <div><span>Created</span><strong>{date(data.tenant.created_at)}</strong></div>
-        <div><span>Status</span><strong>{status({ suspended_at: data.tenant.suspended_at, access: data.access, billing_state: data.billing?.state ?? null }).text}</strong></div>
-        <div><span>Plan</span><strong>{label(data.billing?.plan_key) } {data.billing?.billing_interval ? `· ${data.billing.billing_interval}ly` : ""}</strong></div>
+        <div><span>Status</span><strong>{status({ suspended_at: data.tenant.suspended_at, access: data.access, billing_state: data.billing?.state ?? null, grant_plan_key: grant?.plan_key ?? null }).text}</strong></div>
+        <div><span>Plan</span><strong>{planName(data.billing?.plan_key) } {data.billing?.billing_interval ? `· ${data.billing.billing_interval}ly` : ""}</strong></div>
         <div><span>Paid through</span><strong>{date(data.billing?.paid_through || data.billing?.trial_ends_at)}</strong></div>
         <div><span>Provider</span><strong>{data.billing?.provider || "—"}</strong></div>
         <div><span>Plan credits</span><strong>{data.credits ? `${data.credits.balance.toLocaleString()} / ${data.credits.allowance.toLocaleString()}` : "—"}</strong></div>
         <div><span>Bonus credits</span><strong>{(data.credits?.bonus_balance ?? 0).toLocaleString()}</strong></div>
         <div><span>AI replies (30d)</span><strong>{data.ai_replies_30d.toLocaleString()}</strong></div>
         <div><span>Channels · Products · Orders</span><strong>{data.counts.channels} · {data.counts.products} · {data.counts.orders}</strong></div>
-        {data.operator_grant && <div><span>Free access until</span><strong>{date(data.operator_grant.access_until)}</strong></div>}
+        {data.operator_grant && <div><span>{data.operator_grant.plan_key ? `${planName(data.operator_grant.plan_key)} assigned until` : "Free access until"}</span><strong>{date(data.operator_grant.access_until)}</strong></div>}
       </div>
 
       <form className="commerce-card admin-form" onSubmit={adjust}>
@@ -133,6 +166,22 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
           <label>Reason<input required minLength={3} maxLength={500} value={note} onChange={e => setNote(e.target.value)} placeholder="Shown in the ledger and audit log" /></label>
         </div>
         <div className="commerce-actions"><button className="button primary" disabled={busy}>Apply</button></div>
+      </form>
+
+      <form className="commerce-card admin-form" onSubmit={assignPlan}>
+        <h3>{grant ? "Change or extend assigned plan" : "Assign a plan"}</h3>
+        <p>{grant
+          ? `On ${planName(grant.plan_key)} until ${date(grant.access_until)}, assigned by Pulse. Assigning again replaces it from today.`
+          : "Give this business a paid plan for a set number of months without payment. Its features, team seats and monthly AI credits apply right away."}</p>
+        <div className="commerce-form-grid">
+          <label>Plan<select value={grantPlan} onChange={e => setGrantPlan(e.target.value as PlanKey)}>{PLAN_KEYS.map(key => <option key={key} value={key}>{PLAN_NAMES[key]}</option>)}</select></label>
+          <label>Duration<select value={grantMonths} onChange={e => setGrantMonths(e.target.value)}>{[1, 2, 3, 6, 12, 24].map(m => <option key={m} value={m}>{m} month{m === 1 ? "" : "s"}</option>)}</select></label>
+          <label className="wide">Reason<input required minLength={3} maxLength={500} value={grantReason} onChange={e => setGrantReason(e.target.value)} placeholder="Shown in the audit log" /></label>
+        </div>
+        <div className="commerce-actions">
+          <button className="button primary" disabled={busy}>{grant ? "Change / extend" : "Assign plan"}</button>
+          {grant && <button type="button" className="button danger" disabled={busy} onClick={revokePlan}>Revoke to free</button>}
+        </div>
       </form>
 
       <form className="commerce-card admin-form" onSubmit={toggleSuspend}>
@@ -151,7 +200,7 @@ function BusinessDetail({ id, onClose, onChanged }: { id: string; onClose: () =>
 }
 
 function InvoiceTable({ rows, showBusiness }: { rows: Invoice[]; showBusiness?: boolean }) {
-  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Date</th>{showBusiness && <th>Business</th>}<th>Plan</th><th>Amount</th><th>Provider</th><th>State</th><th>Transaction</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td>{dateTime(row.paid_at || row.created_at)}</td>{showBusiness && <td>{row.tenant_name || "—"}</td>}<td>{label(row.plan_key)} · {row.billing_interval}{row.kind === "upgrade" ? " (upgrade)" : ""}</td><td className="num">{formatMoney(row.amount_minor, row.currency_code)}</td><td>{row.provider}</td><td><span className={`commerce-state ${row.state === "paid" ? "completed" : row.state === "failed" ? "cancelled" : "draft"}`}>{row.state}</span></td><td className="mono">{row.provider_transaction_id || "—"}</td></tr>)}</tbody></table></div>;
+  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Date</th>{showBusiness && <th>Business</th>}<th>Plan</th><th>Amount</th><th>Provider</th><th>State</th><th>Transaction</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td>{dateTime(row.paid_at || row.created_at)}</td>{showBusiness && <td>{row.tenant_name || "—"}</td>}<td>{planName(row.plan_key)} · {row.billing_interval}{row.kind === "upgrade" ? " (upgrade)" : ""}</td><td className="num">{formatMoney(row.amount_minor, row.currency_code)}</td><td>{row.provider}</td><td><span className={`commerce-state ${row.state === "paid" ? "completed" : row.state === "failed" ? "cancelled" : "draft"}`}>{row.state}</span></td><td className="mono">{row.provider_transaction_id || "—"}</td></tr>)}</tbody></table></div>;
 }
 
 function LedgerTable({ rows, showBusiness }: { rows: LedgerRow[]; showBusiness?: boolean }) {
@@ -181,8 +230,8 @@ function BusinessesTab() {
           const s = status(row);
           return <tr key={row.id}>
             <td><span className="admin-cell-stack"><strong>{row.name}</strong><small>{row.owner_email || "No owner email"}</small></span></td>
-            <td><span className="admin-cell-stack"><span className={`commerce-state ${s.tone}`}>{s.text}</span><small>{label(row.plan_key)}</small></span></td>
-            <td>{date(row.paid_through || row.trial_ends_at)}</td>
+            <td><span className="admin-cell-stack"><span className={`commerce-state ${s.tone}`}>{s.text}</span><small>{planName(row.grant_plan_key || row.plan_key)}</small></span></td>
+            <td>{date(row.grant_until || row.paid_through || row.trial_ends_at)}</td>
             <td className="num">{(row.balance ?? 0).toLocaleString()} + {row.bonus_balance.toLocaleString()}</td>
             <td className="num">{row.members}</td>
             <td className="admin-action-cell"><button type="button" className="button admin-manage" onClick={() => setOpen(row.id)} aria-label={`Manage ${row.name}`}>Manage</button></td>
@@ -195,7 +244,6 @@ function BusinessesTab() {
   </>;
 }
 
-const PLAN_NAMES: Record<string, string> = { pro: "Pro", enterprise: "Enterprise" };
 const PERIOD: Record<string, string> = { month: "Monthly", year: "Yearly" };
 
 function PriceEditor({ row, stripeReady, onSaved }: { row: PriceRow; stripeReady: boolean; onSaved: () => void }) {
@@ -210,7 +258,7 @@ function PriceEditor({ row, stripeReady, onSaved }: { row: PriceRow; stripeReady
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!/^\d{1,8}(\.\d{1,2})?$/.test(value.trim()) || minor < 100) { setNotice("Enter a price of at least 1.00, up to 2 decimals."); return; }
-    if (!window.confirm(`Change ${PLAN_NAMES[row.plan]} ${PERIOD[row.interval].toLowerCase()} (${row.currency}) from ${formatMoney(row.amount_minor, row.currency)} to ${formatMoney(minor, row.currency)}?\n\nNew checkouts pay the new price. Current subscribers keep the price they bought.`)) return;
+    if (!window.confirm(`Change ${planName(row.plan)} ${PERIOD[row.interval].toLowerCase()} (${row.currency}) from ${formatMoney(row.amount_minor, row.currency)} to ${formatMoney(minor, row.currency)}?\n\nNew checkouts pay the new price. Current subscribers keep the price they bought.`)) return;
     setBusy(true); setNotice("");
     try {
       await api("/admin/plans/price", { method: "PUT", body: JSON.stringify({ plan: row.plan, interval: row.interval, currency: row.currency, amount_minor: minor, request_id: requestKey }) });
@@ -221,7 +269,7 @@ function PriceEditor({ row, stripeReady, onSaved }: { row: PriceRow; stripeReady
   return <tr>
     <td>{PERIOD[row.interval]}</td><td>{row.currency}</td>
     <td><form className="admin-price-form" onSubmit={save}>
-      <label className="sr-only" htmlFor={`price-${row.plan}-${row.interval}-${row.currency}`}>{PLAN_NAMES[row.plan]} {PERIOD[row.interval]} price in {row.currency}</label>
+      <label className="sr-only" htmlFor={`price-${row.plan}-${row.interval}-${row.currency}`}>{planName(row.plan)} {PERIOD[row.interval]} price in {row.currency}</label>
       <input id={`price-${row.plan}-${row.interval}-${row.currency}`} inputMode="decimal" value={value} onChange={e => { setValue(e.target.value); setNotice(""); }} disabled={busy || blocked} />
       <button className="button" disabled={busy || blocked || !changed}>{busy ? "Saving…" : "Save"}</button>
     </form>{notice && <small className="admin-price-notice" role="status">{notice}</small>}</td>
@@ -262,13 +310,13 @@ function PlansTab() {
   return <>
     <p className="admin-help">Prices shown to business owners on the Plan page. Changes apply to <strong>new checkouts</strong>; current subscribers keep the price they bought. Plan features and monthly credits are not edited here.</p>
     {!data.stripe_configured && <p className="form-notice">Stripe is not configured, so USD and GBP prices cannot be changed. BDT (SSLCOMMERZ) prices can.</p>}
-    {["pro", "enterprise"].map(plan => <section className="commerce-card" key={plan}>
+    {PLAN_KEYS.map(plan => <section className="commerce-card" key={plan}>
       <h2>{PLAN_NAMES[plan]} <small className="admin-muted">· {data.credits[plan]?.toLocaleString()} AI credits / month</small></h2>
       <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Billing</th><th>Currency</th><th>Price</th><th>Source</th><th>Stripe price</th></tr></thead>
         <tbody>{data.prices.filter(row => row.plan === plan).map(row => <PriceEditor key={`${row.interval}-${row.currency}-${version}`} row={row} stripeReady={data.stripe_configured} onSaved={load} />)}</tbody></table></div>
     </section>)}
     <section className="commerce-card"><h2>Free trial</h2><p>7-day trial for every new business. Changing this does not affect businesses that already signed up; use bonus credits on a business for that.</p><TrialCreditsForm key={`trial-${version}`} current={data.trial_credits} onSaved={load} /></section>
-    <section className="commerce-card"><h2>Price history</h2>{data.history.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>When</th><th>Admin</th><th>Plan</th><th className="num">Price</th><th>Stripe price</th></tr></thead><tbody>{data.history.map((row, index) => <tr key={`${row.created_at}-${index}`}><td>{dateTime(row.created_at)}</td><td>{row.actor_email || "—"}</td><td>{PLAN_NAMES[row.plan_key]} {PERIOD[row.billing_interval].toLowerCase()}</td><td className="num">{formatMoney(row.amount_minor, row.currency_code)}</td><td className="admin-mono">{row.stripe_price_id || "—"}</td></tr>)}</tbody></table></div> : <p className="commerce-empty">No price changes yet. Configured defaults apply.</p>}</section>
+    <section className="commerce-card"><h2>Price history</h2>{data.history.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>When</th><th>Admin</th><th>Plan</th><th className="num">Price</th><th>Stripe price</th></tr></thead><tbody>{data.history.map((row, index) => <tr key={`${row.created_at}-${index}`}><td>{dateTime(row.created_at)}</td><td>{row.actor_email || "—"}</td><td>{planName(row.plan_key)} {PERIOD[row.billing_interval].toLowerCase()}</td><td className="num">{formatMoney(row.amount_minor, row.currency_code)}</td><td className="admin-mono">{row.stripe_price_id || "—"}</td></tr>)}</tbody></table></div> : <p className="commerce-empty">No price changes yet. Configured defaults apply.</p>}</section>
   </>;
 }
 

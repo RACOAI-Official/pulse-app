@@ -1,6 +1,7 @@
 """Pulse-owned subscription billing and AI credits.
 
-Owners pay Pulse (not their customers) for the Pro or Enterprise plan, monthly or yearly.
+Owners pay Pulse (not their customers) for the Starter, Business ("pro") or Enterprise plan,
+monthly or yearly. Operators can also assign a plan for a fixed number of months.
 USD/GBP go through Stripe as auto-renewing subscriptions; BDT goes through SSLCOMMERZ as
 prepaid terms. Gateway notifications are verified with the provider before access changes.
 """
@@ -33,8 +34,13 @@ router = APIRouter(prefix="/tenants/{tenant_id}/billing", tags=["billing"])
 webhooks = APIRouter(tags=["billing-webhooks"])
 logger = logging.getLogger(__name__)
 
-PLANS = ("pro", "enterprise")
-NAMES = {"pro": "Pro", "enterprise": "Enterprise"}
+PLANS = ("starter", "pro", "enterprise")
+# The internal key "pro" is shown as "Business"; live subscriptions already carry it.
+NAMES = {"starter": "Starter", "pro": "Business", "enterprise": "Enterprise"}
+RANK = {plan: index for index, plan in enumerate(PLANS, start=1)}
+# Team seats per plan (owner included); None = unlimited. Trial / no plan keeps 3 seats.
+SEATS = {"starter": 1, "pro": 3, "enterprise": None}
+TRIAL_SEATS = 3
 INTERVALS = ("month", "year")
 CURRENCIES = ("USD", "GBP", "BDT")
 STRIPE_CURRENCIES = ("USD", "GBP")
@@ -45,7 +51,7 @@ RETURN_PATHS = {"plan": "/plan", "onboarding": "/onboarding"}
 
 
 class CheckoutInput(BaseModel):
-    plan: str = Field(pattern="^(pro|enterprise)$")
+    plan: str = Field(pattern="^(starter|pro|enterprise)$")
     interval: str = Field(default="month", pattern="^(month|year)$")
     currency: str = Field(default="USD", pattern="^(USD|GBP|BDT)$")
     auto_renew: bool = True
@@ -167,14 +173,34 @@ def has_access(tenant_id: str) -> bool:
     return bool(service_request("POST", "rpc/pulse_billing_has_access", body={"p_tenant_id": tenant_id}))
 
 
+def effective_plan(tenant_id: str) -> str | None:
+    """Highest plan held now (paid term or operator grant); None on trial or with no plan."""
+    plan = service_request("POST", "rpc/pulse_billing_effective_plan", body={"p_tenant_id": tenant_id})
+    return plan if plan in PLANS else None
+
+
 def paid_access(tenant_id: str) -> bool:
-    """True only for a paid, active plan; the free trial does not unlock integrations."""
-    return is_active(account(tenant_id))
+    """True only for a paid or operator-assigned plan; the free trial does not unlock integrations."""
+    return effective_plan(tenant_id) is not None
 
 
 def require_paid(tenant_id: str) -> None:
     if not paid_access(tenant_id):
-        raise HTTPException(402, "Integrations need Pro. Upgrade your plan to connect channels")
+        raise HTTPException(402, "Integrations need a paid plan. Upgrade your plan to connect channels")
+
+
+def require_plan(tenant_id: str, minimum: str, feature: str) -> None:
+    plan = effective_plan(tenant_id)
+    if RANK.get(plan or "", 0) < RANK[minimum]:
+        raise HTTPException(402, f"{feature} needs the {NAMES[minimum]} plan or higher. Upgrade your plan")
+
+
+def seat_limit(plan: str | None) -> int | None:
+    return SEATS[plan] if plan else TRIAL_SEATS
+
+
+class PlanChange(BaseModel):
+    plan: str = Field(pattern="^(starter|pro|enterprise)$")
 
 
 def consume_credit(tenant_id: str, source_id: str) -> bool:
@@ -212,11 +238,11 @@ def is_active(current: dict | None, now: datetime | None = None) -> bool:
     return bool(current and current.get("state") == "active" and paid_end and paid_end > now)
 
 
-def upgrade_quote(current: dict, now: datetime | None = None) -> int:
+def upgrade_quote(current: dict, now: datetime | None = None, target: str = "enterprise") -> int:
     """Prorated price difference (minor units) for the rest of the current term, rounded up to a whole unit."""
     now = now or datetime.now(timezone.utc)
     interval, currency = current["billing_interval"], current["currency_code"]
-    difference = price("enterprise", interval, currency) - price("pro", interval, currency)
+    difference = price(target, interval, currency) - price(current["plan_key"], interval, currency)
     end = parse_time(current["paid_through"])
     start = parse_time(current.get("term_start")) or end - term_delta(interval)
     term = (end - start).total_seconds()
@@ -249,10 +275,17 @@ def _status(tenant_id: UUID, auth: tuple[str, dict]):
     visible = {key: current.get(key) for key in (
         "plan_key", "pending_plan_key", "billing_interval", "currency_code", "provider", "state",
         "auto_renew", "trial_ends_at", "term_start", "paid_through")} if current else None
-    quote = None
-    if current and is_active(current) and current.get("plan_key") == "pro":
-        quote = {"amount_minor": upgrade_quote(current), "currency_code": current["currency_code"],
-                 "estimate": current.get("provider") == "stripe"}
+    quotes = {}
+    if current and is_active(current) and current.get("plan_key") in PLANS:
+        for target in PLANS:
+            if RANK[target] > RANK[current["plan_key"]]:
+                quotes[target] = {"amount_minor": upgrade_quote(current, target=target),
+                                  "currency_code": current["currency_code"],
+                                  "estimate": current.get("provider") == "stripe"}
+    grants = rows("billing_operator_grants", tenant_id=eq(tenant), select="plan_key,access_until",
+                  plan_key="not.is.null", limit="1")
+    grant = grants[0] if grants and parse_time(grants[0]["access_until"]) > datetime.now(timezone.utc) else None
+    plan_now = effective_plan(tenant)
     plans = []
     for key in PLANS:
         monthly = allowance(key)
@@ -261,7 +294,8 @@ def _status(tenant_id: UUID, auth: tuple[str, dict]):
                       "prices": {interval: {currency: price(key, interval, currency) for currency in CURRENCIES}
                                  for interval in INTERVALS}})
     return {"account": visible, "credits": credits(tenant), "invoices": invoices,
-            "access": has_access(tenant), "providers": providers(), "upgrade_quote": quote,
+            "access": has_access(tenant), "providers": providers(), "upgrade_quotes": quotes,
+            "grant": grant, "effective_plan": plan_now, "seat_limit": seat_limit(plan_now),
             "policies": {"terms": settings.pulse_terms_url, "privacy": settings.pulse_privacy_url,
                          "refund": settings.pulse_refund_url},
             "plans": plans}
@@ -300,7 +334,7 @@ def ssl_session(checkout: dict, email: str, contact: dict) -> dict:
     settings = get_settings()
     callback = settings.pulse_api_public_url.rstrip("/") + "/webhooks/billing/sslcommerz"
     back = "?return=1" + ("&to=onboarding" if checkout.get("return_path") == "/onboarding" else "")
-    label = ("upgrade to Enterprise" if checkout["kind"] == "upgrade" else
+    label = (f"upgrade to {NAMES[checkout['plan_key']]}" if checkout["kind"] == "upgrade" else
              f"{NAMES[checkout['plan_key']]} {'yearly' if checkout['billing_interval'] == 'year' else 'monthly'} subscription")
     form = {"store_id": settings.pulse_ssl_store_id, "store_passwd": settings.pulse_ssl_store_passwd,
             "total_amount": str((Decimal(checkout["amount_minor"]) / 100).quantize(Decimal("0.01"))), "currency": "BDT",
@@ -465,28 +499,31 @@ def _checkout(tenant_id: UUID, data: CheckoutInput, auth: tuple[str, dict]):
     return {"checkout_url": result["url"]}
 
 
-def require_owner_plan(current: dict | None, plan: str) -> dict:
-    if not is_active(current) or current.get("plan_key") != plan:
-        raise HTTPException(409, f"An active {NAMES[plan]} plan is required")
+def require_change(current: dict | None, target: str, higher: bool) -> dict:
+    if not is_active(current) or current.get("plan_key") not in PLANS:
+        raise HTTPException(409, "An active paid plan is required")
+    if (RANK[target] > RANK[current["plan_key"]]) != higher or target == current["plan_key"]:
+        raise HTTPException(409, f"{NAMES[target]} is not {'an upgrade' if higher else 'a downgrade'} "
+                                 f"from {NAMES[current['plan_key']]}")
     return current
 
 
 @router.post("/upgrade", dependencies=[user_limit("billing-write", 10, 600)])
-async def upgrade(tenant_id: UUID, auth: Session):
-    """Pro -> Enterprise now; pay the prorated difference, keep the term end, top up credits."""
+async def upgrade(tenant_id: UUID, auth: Session, data: PlanChange | None = None):
+    """Move to a higher plan now; pay the prorated difference, keep the term end, top up credits."""
     await owner(tenant_id, auth[0])
-    return await asyncio.to_thread(_upgrade, tenant_id, auth)
+    return await asyncio.to_thread(_upgrade, tenant_id, auth, (data.plan if data else "enterprise"))
 
 
-def _upgrade(tenant_id: UUID, auth: tuple[str, dict]):
+def _upgrade(tenant_id: UUID, auth: tuple[str, dict], target: str = "enterprise"):
     tenant = str(tenant_id)
-    current = require_owner_plan(account(tenant), "pro")
+    current = require_change(account(tenant), target, higher=True)
     interval, currency = current["billing_interval"], current["currency_code"]
     if current["provider"] == "stripe":
         sub_id = current.get("stripe_subscription_id")
-        new_price = stripe_price_id("enterprise", interval, currency)
+        new_price = stripe_price_id(target, interval, currency)
         if not sub_id or not new_price:
-            raise HTTPException(503, "Enterprise Stripe price is not configured")
+            raise HTTPException(503, f"{NAMES[target]} Stripe price is not configured")
         sub = stripe("GET", f"subscriptions/{sub_id}")
         items = (sub.get("items") or {}).get("data") or []
         if len(items) != 1:
@@ -495,21 +532,21 @@ def _upgrade(tenant_id: UUID, auth: tuple[str, dict]):
         updated = stripe("POST", f"subscriptions/{sub_id}", data={
             "items[0][id]": items[0]["id"], "items[0][price]": new_price,
             "proration_behavior": "always_invoice", "payment_behavior": "error_if_incomplete",
-            "metadata[plan_key]": "enterprise"}, key=f"pulse-upgrade-{sub_id}-{current['paid_through']}")
+            "metadata[plan_key]": target}, key=f"pulse-upgrade-{sub_id}-{target}-{current['paid_through']}")
         if updated.get("latest_invoice"):
             stripe_upgrade_paid(stripe("GET", f"invoices/{updated['latest_invoice']}"), updated)
         return {"status": "upgraded"}
-    amount = upgrade_quote(current)
+    amount = upgrade_quote(current, target=target)
     if amount <= 0:
-        raise HTTPException(409, "The current term is ending; renew on Enterprise instead")
+        raise HTTPException(409, f"The current term is ending; renew on {NAMES[target]} instead")
     now = datetime.now(timezone.utc)
     existing = open_checkout(tenant, now)
     if existing:
-        if existing["kind"] == "upgrade" and existing.get("gateway_url"):
+        if existing["kind"] == "upgrade" and existing["plan_key"] == target and existing.get("gateway_url"):
             return {"checkout_url": existing["gateway_url"]}
         raise HTTPException(409, "A different checkout is still open for this business")
     email = auth[1].get("email") or current.get("billing_email") or ""
-    row = create_checkout(tenant, plan="enterprise", interval=interval, currency=currency,
+    row = create_checkout(tenant, plan=target, interval=interval, currency=currency,
                           kind="upgrade", auto_renew=False, amount=amount)
     try:
         result = ssl_session(row, email, current)
@@ -522,31 +559,31 @@ def _upgrade(tenant_id: UUID, auth: tuple[str, dict]):
 
 
 @router.post("/downgrade")
-async def downgrade(tenant_id: UUID, auth: Session):
-    """Enterprise -> Pro at the next renewal; the current term keeps Enterprise."""
+async def downgrade(tenant_id: UUID, auth: Session, data: PlanChange | None = None):
+    """Move to a lower plan at the next renewal; the current term keeps the current plan."""
     await owner(tenant_id, auth[0])
-    return await asyncio.to_thread(_downgrade, tenant_id, auth)
+    return await asyncio.to_thread(_downgrade, tenant_id, auth, (data.plan if data else "pro"))
 
 
-def _downgrade(tenant_id: UUID, auth: tuple[str, dict]):
+def _downgrade(tenant_id: UUID, auth: tuple[str, dict], target: str = "pro"):
     tenant = str(tenant_id)
-    current = require_owner_plan(account(tenant), "enterprise")
+    current = require_change(account(tenant), target, higher=False)
     if current["provider"] == "stripe":
         sub_id = current.get("stripe_subscription_id")
-        new_price = stripe_price_id("pro", current["billing_interval"], current["currency_code"])
+        new_price = stripe_price_id(target, current["billing_interval"], current["currency_code"])
         if not sub_id or not new_price:
-            raise HTTPException(503, "Pro Stripe price is not configured")
+            raise HTTPException(503, f"{NAMES[target]} Stripe price is not configured")
         sub = stripe("GET", f"subscriptions/{sub_id}")
         items = (sub.get("items") or {}).get("data") or []
         if len(items) != 1:
             raise HTTPException(409, "Subscription items cannot be changed automatically")
-        # No proration: the paid period is untouched and the next invoice uses the Pro price.
+        # No proration: the paid period is untouched and the next invoice uses the lower price.
         stripe("POST", f"subscriptions/{sub_id}", data={
             "items[0][id]": items[0]["id"], "items[0][price]": new_price,
-            "proration_behavior": "none", "metadata[plan_key]": "pro"},
-            key=f"pulse-downgrade-{sub_id}-{current['paid_through']}")
+            "proration_behavior": "none", "metadata[plan_key]": target},
+            key=f"pulse-downgrade-{sub_id}-{target}-{current['paid_through']}")
     service_request("PATCH", "billing_accounts", params={"tenant_id": eq(tenant)},
-                    body={"pending_plan_key": "pro"})
+                    body={"pending_plan_key": target})
     return {"status": "scheduled", "effective_at": current["paid_through"]}
 
 
@@ -581,14 +618,15 @@ def subscription_id(invoice: dict) -> str | None:
 
 
 def stripe_upgrade_paid(invoice: dict, sub: dict) -> None:
-    """Settle the prorated Pro -> Enterprise invoice; idempotent per Stripe invoice."""
+    """Settle a prorated upgrade invoice; idempotent per Stripe invoice."""
     if invoice.get("status") != "paid" or invoice.get("billing_reason") != "subscription_update":
         return
     meta = sub.get("metadata") or {}
     tenant = meta.get("tenant_id")
     currency = (invoice.get("currency") or "").upper()
     current = account(tenant) if tenant else None
-    if (not current or meta.get("plan_key") != "enterprise" or currency not in STRIPE_CURRENCIES or
+    target = meta.get("plan_key")
+    if (not current or target not in PLANS or currency not in STRIPE_CURRENCIES or
             current.get("stripe_customer_id") != sub.get("customer") or
             current.get("stripe_subscription_id") != sub.get("id")):
         raise HTTPException(422, "Stripe upgrade invoice does not match a Pulse plan")
@@ -599,7 +637,7 @@ def stripe_upgrade_paid(invoice: dict, sub: dict) -> None:
     now = datetime.now(timezone.utc)
     if amount <= 0 or not paid_end or paid_end <= now:
         return
-    row = create_checkout(tenant, plan="enterprise", interval=current["billing_interval"], currency=currency,
+    row = create_checkout(tenant, plan=target, interval=current["billing_interval"], currency=currency,
                           kind="upgrade", auto_renew=bool(current.get("auto_renew")), amount=amount)
     settle(row, invoice["id"], invoice.get("payment_intent") or invoice["id"], now, paid_end)
 

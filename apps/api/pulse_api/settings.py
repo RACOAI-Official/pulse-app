@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     pulse_api_public_url: str = ""
     pulse_stripe_secret_key: str = ""
     pulse_stripe_webhook_secret: str = ""
+    pulse_stripe_price_starter_month_usd: str = ""
+    pulse_stripe_price_starter_year_usd: str = ""
+    pulse_stripe_price_starter_month_gbp: str = ""
+    pulse_stripe_price_starter_year_gbp: str = ""
     pulse_stripe_price_pro_month_usd: str = ""
     pulse_stripe_price_pro_year_usd: str = ""
     pulse_stripe_price_pro_month_gbp: str = ""
@@ -56,26 +60,43 @@ class Settings(BaseSettings):
     pulse_ssl_store_passwd: str = ""
     pulse_ssl_environment: str = "sandbox"
     # Fixed price table in minor units (cents, pence, paisa). Yearly = 10 x monthly.
+    # Plan "pro" is shown as "Business". Admin price edits (plan_price_versions) override these.
+    # Pro/Enterprise USD+GBP defaults stay at their launch amounts: they back the original Stripe
+    # price IDs, so grandfathered renewals still match. Change those prices from Admin -> Plans.
+    pulse_price_starter_month_usd: int = 3900
+    pulse_price_starter_year_usd: int = 39000
+    pulse_price_starter_month_gbp: int = 3200
+    pulse_price_starter_year_gbp: int = 32000
+    pulse_price_starter_month_bdt: int = 499900
+    pulse_price_starter_year_bdt: int = 4999000
     pulse_price_pro_month_usd: int = 3000
     pulse_price_pro_year_usd: int = 30000
     pulse_price_pro_month_gbp: int = 2500
     pulse_price_pro_year_gbp: int = 25000
-    pulse_price_pro_month_bdt: int = 350000
-    pulse_price_pro_year_bdt: int = 3500000
+    pulse_price_pro_month_bdt: int = 649900
+    pulse_price_pro_year_bdt: int = 6499000
     pulse_price_enterprise_month_usd: int = 10000
     pulse_price_enterprise_year_usd: int = 100000
     pulse_price_enterprise_month_gbp: int = 8000
     pulse_price_enterprise_year_gbp: int = 80000
-    pulse_price_enterprise_month_bdt: int = 1200000
-    pulse_price_enterprise_year_bdt: int = 12000000
+    pulse_price_enterprise_month_bdt: int = 1099900
+    pulse_price_enterprise_year_bdt: int = 10999000
     # Monthly AI credit allowances; 1 credit = 1 AI auto-reply.
+    pulse_credits_starter: int = 1000
     pulse_credits_pro: int = 4000
-    pulse_credits_enterprise: int = 15000
+    pulse_credits_enterprise: int = 12000
     pulse_terms_url: str = ""
     pulse_privacy_url: str = ""
     pulse_refund_url: str = ""
     # Owner alerts (email + WhatsApp). Off until the operator has configured senders.
     pulse_notifications_enabled: bool = False
+    # How owner alerts reach WhatsApp: "cloud" (Meta Cloud API, approved templates) or
+    # "openwa" (self-hosted OpenWA gateway session, plain text). PULSE_WHATSAPP_NUMBER is used by both.
+    pulse_whatsapp_provider: str = "cloud"
+    pulse_openwa_url: str = ""
+    pulse_openwa_api_key: str = ""
+    pulse_openwa_session_id: str = ""
+    pulse_openwa_webhook_secret: str = ""
     # Pulse's own WhatsApp Cloud API number (not a tenant channel).
     pulse_whatsapp_phone_id: str = ""
     pulse_whatsapp_number: str = ""

@@ -242,7 +242,7 @@ html,body{overflow-x:clip}
 .plan-meter.empty i{background:var(--warning-bg)}
 .plan-meter i:nth-child(4n+1){animation-delay:.02s}.plan-meter i:nth-child(4n+2){animation-delay:.06s}.plan-meter i:nth-child(4n+3){animation-delay:.1s}.plan-meter i:nth-child(4n){animation-delay:.14s}
 @keyframes plan-tick{from{transform:scaleY(.2);opacity:0}to{transform:scaleY(1);opacity:1}}
-.plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
+.plan-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr) minmax(0,1fr);gap:16px;margin:16px 0;align-items:stretch}
 .plan-card{position:relative;display:flex;flex-direction:column;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:28px;animation:plan-rise .45s ease-out both;transition:border-color .2s,box-shadow .2s}
 .plan-card.enterprise{background:linear-gradient(180deg,var(--surface) 0%,var(--surface-2) 70%);border-color:var(--teal)}
 .plan-card.enterprise::before{content:"";position:absolute;inset:0 0 auto;height:4px;border-radius:6px 6px 0 0;background:var(--teal)}
@@ -261,6 +261,34 @@ html,body{overflow-x:clip}
 @keyframes plan-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.plan-card,.plan-meter i{animation:none}}
 @media (max-width:860px){.plan-status,.plan-grid{grid-template-columns:1fr}.plan-heading{align-items:flex-start}}
+/* Three-tier pricing (Starter / Business / Enterprise): Business is the featured teal card. */
+.plan-card.enterprise{background:var(--surface-2);border-color:var(--line)}.plan-card.enterprise::before{content:none}
+.plan-card.featured{background:var(--teal-deep);border-color:var(--teal-deep);color:var(--white);box-shadow:0 30px 60px -24px rgba(12,79,75,.45);z-index:1}
+.plan-card.featured h2,.plan-card.featured .plan-price strong,.plan-card.featured li b{color:var(--white)}
+.plan-card.featured .plan-for,.plan-card.featured .plan-sub,.plan-card.featured .plan-price span{color:#a9c7c0}
+.plan-card.featured ul{color:#e6f0ec;border-top-color:rgba(199,235,164,.25)}
+.plan-card.featured li svg{color:var(--lime)}
+.plan-card.featured .plan-tag.alt{background:rgba(199,235,164,.16);color:var(--lime)}
+.plan-card.featured .plan-tag{background:var(--lime);color:var(--teal-deep)}
+.plan-card.featured .button{background:var(--lime);color:var(--teal-deep);border-color:var(--lime)}
+.plan-card.featured .button:hover:not(:disabled){background:#d6f4c3}
+.plan-card.featured .button.subtle{background:transparent;color:var(--lime);border-color:rgba(199,235,164,.45)}
+.plan-card.featured.selected,.plan-card.featured.current{box-shadow:0 0 0 3px var(--lime),0 30px 60px -24px rgba(12,79,75,.45)}
+.plan-for{color:var(--muted);font-size:13px;margin:6px 0 0;min-height:38px}
+.plan-includes{margin:18px 0 0;font-size:12px;font-weight:700;letter-spacing:.01em}
+.plan-card .plan-includes+ul{border-top:0;padding-top:10px}
+.plan-site{margin:4px 0 0;background:var(--lime);color:var(--teal-deep);border-radius:12px;padding:12px;display:grid;grid-template-columns:60px 1fr;gap:12px;align-items:center}
+.plan-site p{margin:0}
+.plan-site-frame{width:60px;height:46px;border-radius:6px;background:var(--white);border:2px solid var(--teal-deep);overflow:hidden}
+.plan-site-bar{height:9px;background:var(--teal-deep);display:flex;gap:3px;align-items:center;padding-left:4px}
+.plan-site-bar i{width:3px;height:3px;border-radius:50%;background:var(--lime)}
+.plan-site-body{padding:4px;display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+.plan-site-body b{height:12px;border-radius:2px;background:#bfe3a6}.plan-site-body b:nth-child(2){background:#a9d68c}
+.plan-site-title{font:700 14px/1.2 var(--font-display)}
+.plan-site-sub{font-size:12px;margin-top:2px}.plan-site-sub s{opacity:.65}
+.plan-all{margin:8px auto 24px;max-width:760px;text-align:center;color:var(--muted);font-size:14px}
+.plan-all p{margin:0}.plan-all strong{color:var(--text)}.plan-all .settings-note{margin-top:6px}
+@media (max-width:1100px){.plan-grid{grid-template-columns:1fr;max-width:520px;margin-inline:auto}.plan-card.featured{order:-1}.plan-for{min-height:0}}
 
 /* Onboarding wizard — teal rail, cream stage; one staggered reveal per step. */
 .onb{display:grid;grid-template-columns:minmax(260px,320px) 1fr;min-height:100vh;background:var(--bg)}
@@ -312,7 +340,7 @@ html,body{overflow-x:clip}
 .onb-under{max-width:1180px;margin:16px auto 0}
 .onb-wide .agent-page,.onb-wide .plan-page{padding:0;max-width:none;overflow:visible}
 .onb-integrations{max-width:1000px}
-.plan-grid.with-free{grid-template-columns:repeat(3,minmax(0,1fr))}
+.plan-grid.with-free{grid-template-columns:repeat(4,minmax(0,1fr))}
 .plan-card.free{background:var(--surface);border-style:dashed}
 .plan-card li.muted{opacity:.55;text-decoration:line-through;padding-left:24px}
 .onb-inbox{max-width:760px}
@@ -346,7 +374,7 @@ html,body{overflow-x:clip}
 .connect-pick-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer}
 .connect-pick-row input{accent-color:var(--teal);width:18px;height:18px}
 .connect-courier{display:grid;gap:14px;border-radius:var(--radius-md)}
-@media(max-width:1000px){.plan-grid.with-free{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
+@media(max-width:1280px){.plan-grid.with-free{grid-template-columns:repeat(2,minmax(0,1fr));max-width:none}}@media(max-width:1000px){.plan-grid.with-free{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
 @media(max-width:860px){.onb{grid-template-columns:1fr}.onb-rail{position:static;height:auto;padding:20px 16px;gap:16px}.onb-steps{grid-auto-flow:column;grid-auto-columns:max-content;overflow-x:auto;gap:6px;padding-bottom:4px}.onb-step-copy small,.onb-rail-intro,.onb-signout{display:none}.onb-stage{padding:24px 16px 48px}.onb-zones,.onb-row{grid-template-columns:1fr}.onb-thread{grid-template-columns:32px 1fr}.onb-thread-tag,.onb-thread small{display:none}}
 @media(prefers-reduced-motion:reduce){.onb-panel,.onb-panel .onb-card>*,.onb-thread{animation:none}.onb-progress i{transition:none}}
 .brand-mark,.rail-brand-mark{padding:0}.login-header .brand-mark{color:var(--teal-deep)}.brand-mark svg,.rail-brand-mark svg{width:64%;height:auto}
@@ -545,3 +573,15 @@ html,body{overflow-x:clip}
 .admin-muted{color:var(--muted);font-weight:400;font-size:13px}.admin-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
 .admin-price-form{display:flex;align-items:center;gap:8px}.admin-price-form input{width:130px;min-height:40px;padding:8px 10px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:var(--text);font-variant-numeric:tabular-nums}.admin-price-form .button{min-height:40px;padding:8px 14px}.admin-price-notice{display:block;margin-top:6px;color:var(--soft);font-size:12px}
 form.admin-inline-form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin-top:12px}form.admin-inline-form label{display:grid;gap:8px;color:var(--soft);font-size:14px;font-weight:700}form.admin-inline-form input{width:180px;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:var(--text)}form.admin-inline-form .form-notice{flex-basis:100%;margin:0}
+
+/* Settings: account and password change */
+.account-row{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.account-label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bottom:6px}
+.account-email{display:inline-flex;align-items:center;gap:8px;font-size:14px;word-break:break-all}
+.password-form{display:grid;gap:14px;max-width:440px;margin-top:20px}
+.password-form label{display:grid;gap:6px;font-size:12px;font-weight:600}
+.password-form small{font-size:11px;font-weight:500;color:var(--muted);min-height:15px}
+.password-form small.error-text{color:var(--danger)}
+.password-form .password-show{display:flex;gap:8px;align-items:center;margin-top:0;font-weight:500}
+.password-form .password-show input{width:16px;height:16px;min-height:0;margin:0;padding:0}
+.password-form .commerce-actions{align-items:center;flex-wrap:wrap}

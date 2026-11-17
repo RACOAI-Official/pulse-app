@@ -6,6 +6,7 @@ import hmac
 import json
 import re
 import secrets
+from datetime import datetime
 from typing import Literal
 from urllib.parse import quote
 from uuid import UUID
@@ -22,6 +23,7 @@ from .store import eq, service_request, user_request
 
 router = APIRouter(tags=["notifications"])
 BASE = "/tenants/{tenant_id}/notifications"
+OPENWA_MAX_AGE = 600
 STOP_WORDS = ("STOP", "UNSUBSCRIBE")
 BANGLA_STOP = ("বন্ধ", "বন্ধ করুন")
 
@@ -212,21 +214,26 @@ def process_webhook(payload: dict) -> None:
             for status in value.get("statuses", []):
                 process_status(status)
             for message in value.get("messages", []):
-                sender = "+" + str(message.get("from", "")).lstrip("+")
-                if not re.fullmatch(r"\+[1-9]\d{7,14}", sender):
-                    continue
-                text = str((message.get("text") or {}).get("body", "")).strip()
-                if text.upper() in STOP_WORDS or text in BANGLA_STOP:
-                    service_request("PATCH", "notification_settings", params={"whatsapp": eq(sender)},
-                                    body={"whatsapp_enabled": False, "whatsapp_consent_at": None})
-                    service_request("PATCH", "notification_deliveries", body={
-                        "status": "suppressed", "updated_at": now().isoformat()},
-                        params={"channel": "eq.whatsapp", "destination": eq(sender), "status": "eq.queued"})
-                elif text.startswith("PULSE VERIFY "):
-                    token = text.removeprefix("PULSE VERIFY ").strip()
-                    if 20 <= len(token) <= 128:
-                        service_request("POST", "rpc/pulse_verify_notification",
-                                        body={"p_hash": digest(token), "p_channel": "whatsapp", "p_sender": sender})
+                handle_inbound(str(message.get("from", "")), str((message.get("text") or {}).get("body", "")))
+
+
+def handle_inbound(sender: str, text: str) -> None:
+    """An owner's message to Pulse's WhatsApp number: STOP opts out, PULSE VERIFY proves the number."""
+    sender = "+" + sender.lstrip("+")
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", sender):
+        return
+    text = text.strip()
+    if text.upper() in STOP_WORDS or text in BANGLA_STOP:
+        service_request("PATCH", "notification_settings", params={"whatsapp": eq(sender)},
+                        body={"whatsapp_enabled": False, "whatsapp_consent_at": None})
+        service_request("PATCH", "notification_deliveries", body={
+            "status": "suppressed", "updated_at": now().isoformat()},
+            params={"channel": "eq.whatsapp", "destination": eq(sender), "status": "eq.queued"})
+    elif text.startswith("PULSE VERIFY "):
+        token = text.removeprefix("PULSE VERIFY ").strip()
+        if 20 <= len(token) <= 128:
+            service_request("POST", "rpc/pulse_verify_notification",
+                            body={"p_hash": digest(token), "p_channel": "whatsapp", "p_sender": sender})
 
 
 @router.post("/webhooks/pulse-whatsapp")
@@ -243,4 +250,40 @@ async def receive_webhook(request: Request) -> dict:
         await asyncio.to_thread(process_webhook, payload)
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(400, "Invalid webhook") from exc
+    return {"received": True}
+
+
+def process_openwa(payload: dict) -> None:
+    s = get_settings()
+    data = payload.get("data") or {}
+    if (payload.get("event") != "message.received" or payload.get("sessionId") != s.pulse_openwa_session_id
+            or not isinstance(data, dict) or data.get("fromMe") or data.get("isGroup")):
+        return
+    sender = str(data.get("from") or "")
+    # Only phone-number chats; unresolved @lid identities cannot be matched to a saved number.
+    if not sender.endswith(("@c.us", "@s.whatsapp.net")):
+        return
+    handle_inbound(sender.split("@", 1)[0], str(data.get("body") or ""))
+
+
+@router.post("/webhooks/pulse-openwa")
+async def receive_openwa(request: Request) -> dict:
+    raw = await read_limited_body(request, 1024 * 1024, "Webhook too large")
+    secret = get_settings().pulse_openwa_webhook_secret
+    expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    if not secret or not hmac.compare_digest(request.headers.get("x-openwa-signature", ""), expected):
+        raise HTTPException(403, "Invalid signature")
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("payload")
+        sent = datetime.fromisoformat(str(payload.get("timestamp", "")).replace("Z", "+00:00"))
+        if sent.tzinfo is None:
+            raise ValueError("timestamp")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, "Invalid webhook") from exc
+    # Signed but stale payloads are replays.
+    if abs((now() - sent).total_seconds()) > OPENWA_MAX_AGE:
+        raise HTTPException(400, "Stale webhook")
+    await asyncio.to_thread(process_openwa, payload)
     return {"received": True}
