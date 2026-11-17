@@ -7,6 +7,7 @@ port = 54321
 port = 54322
 
 [studio]
+enabled = false
 port = 54323
 
 [auth]
@@ -17,3 +18,13 @@ enable_signup = false
 [auth.email]
 enable_signup = true
 enable_confirmations = true
+
+# Services this project does not use locally; disabled to keep Docker images small.
+[analytics]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[realtime]
+enabled = false
